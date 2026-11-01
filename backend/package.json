@@ -7,7 +7,8 @@
     "build": "tsc",
     "start": "tsx src/server.ts",
     "dev": "tsx watch src/server.ts",
-    "test": "jest --runInBand --detectOpenHandles"
+    "test": "jest --runInBand --detectOpenHandles",
+    "sync:mongo": "tsx src/db/syncToMongo.ts"
   },
   "keywords": [
     "event-discovery",
@@ -22,6 +23,7 @@
     "cors": "^2.8.5",
     "dotenv": "^16.4.7",
     "express": "^4.21.2",
+    "mongodb": "^7.8.0",
     "pptxgenjs": "^3.12.0",
     "uuid": "^11.1.0",
     "zod": "^3.24.2"

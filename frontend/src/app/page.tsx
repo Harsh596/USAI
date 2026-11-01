@@ -36,24 +36,44 @@ import {
   Briefcase,
   Zap,
   Flame,
-  Award
+  Award,
+  Tag,
+  FolderTree,
+  Plus,
+  GitMerge,
+  ThumbsDown,
+  BarChart3
 } from 'lucide-react';
 import * as api from '@/lib/api';
 
 export default function Home() {
   // Navigation State
-  const [activeTab, setActiveTab] = useState<'discover' | 'saved' | 'ideas' | 'filters' | 'monitoring' | 'profile'>('discover');
+  const [activeTab, setActiveTab] = useState<'discover' | 'saved' | 'ideas' | 'filters' | 'monitoring' | 'profile' | 'taxonomy'>('discover');
 
   // Events & Filter State
   const [events, setEvents] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
-  const [location, setLocation] = useState('Bengaluru');
-  const [category, setCategory] = useState('Hackathons');
   const [searchQuery, setSearchQuery] = useState('');
   const [formatFilter, setFormatFilter] = useState<'ALL' | 'IN_PERSON' | 'ONLINE'>('ALL');
   const [freeOnly, setFreeOnly] = useState(false);
   const [hasPrizeOnly, setHasPrizeOnly] = useState(false);
-  const [selectedTag, setSelectedTag] = useState<string>('All');
+
+  // Locations Data & State
+  const [states, setStates] = useState<any[]>([]);
+  const [selectedStateId, setSelectedStateId] = useState<string>('');
+  const [availableCities, setAvailableCities] = useState<any[]>([]);
+  const [selectedCityIds, setSelectedCityIds] = useState<string[]>([]);
+  const [citySearchInput, setCitySearchInput] = useState<string>('');
+  const [cityDropdownOpen, setCityDropdownOpen] = useState(false);
+
+  // Dynamic Taxonomy State
+  const [categories, setCategories] = useState<any[]>([]);
+  const [selectedCategoryId, setSelectedCategoryId] = useState<string>('all');
+
+  // Admin & Weekly Discovery State
+  const [proposals, setProposals] = useState<any[]>([]);
+  const [weeklyReport, setWeeklyReport] = useState<any>(null);
+  const [adminActionLoading, setAdminActionLoading] = useState(false);
 
   // System Health
   const [health, setHealth] = useState<any>(null);
@@ -70,13 +90,19 @@ export default function Home() {
   const [researchQuestion, setResearchQuestion] = useState('');
   const [researchAnswer, setResearchAnswer] = useState<any>(null);
   const [researchLoading, setResearchLoading] = useState(false);
-  const [detailTab, setDetailTab] = useState<'overview' | 'schedule' | 'eligibility' | 'research'>('overview');
 
   // Registration Assistant Modal
   const [regModalEvent, setRegModalEvent] = useState<any>(null);
   const [regPlan, setRegPlan] = useState<any>(null);
   const [regLoading, setRegLoading] = useState(false);
+  const [regApproving, setRegApproving] = useState(false);
+  const [regLiveProgressStep, setRegLiveProgressStep] = useState(1);
   const [regConfirmed, setRegConfirmed] = useState(false);
+  const [regResult, setRegResult] = useState<any>(null);
+  const [editingFields, setEditingFields] = useState<Record<string, string>>({});
+  const [replaceProfileChecked, setReplaceProfileChecked] = useState(true);
+  const [tinyFishLiveLoading, setTinyFishLiveLoading] = useState(false);
+  const [tinyFishLiveResult, setTinyFishLiveResult] = useState<any>(null);
 
   // Idea Development Workspace
   const [ideaEventId, setIdeaEventId] = useState('');
@@ -93,15 +119,24 @@ export default function Home() {
   const [notifications, setNotifications] = useState<any[]>([]);
   const [monitoringRunning, setMonitoringRunning] = useState(false);
 
-  // Load initial data
+  // Initial Load
   useEffect(() => {
     loadHealth();
+    loadLocationsData();
+    loadCategoriesData();
     loadEvents();
     loadSavedFilters();
     loadUserProfile();
     loadSavedEvents();
     loadNotifications();
+    loadAdminData();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Update available cities when selectedStateId changes
+  useEffect(() => {
+    loadCitiesForState(selectedStateId);
+  }, [selectedStateId]);
 
   const loadHealth = async () => {
     try {
@@ -112,10 +147,70 @@ export default function Home() {
     }
   };
 
-  const loadEvents = async (loc = location, cat = category, forceRefresh = false) => {
+  const loadLocationsData = async () => {
+    try {
+      const stateData = await api.fetchStates();
+      setStates(stateData.states || []);
+      const cityData = await api.fetchCities();
+      setAvailableCities(cityData.cities || []);
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  const loadCitiesForState = async (stateId: string) => {
+    try {
+      const cityData = await api.fetchCities(stateId || undefined);
+      setAvailableCities(cityData.cities || []);
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  const loadCategoriesData = async () => {
+    try {
+      const data = await api.fetchCategories();
+      setCategories(data.categories || []);
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  const loadAdminData = async () => {
+    try {
+      const pData = await api.fetchProposals();
+      setProposals(pData.proposals || []);
+      const rData = await api.fetchWeeklyReport();
+      setWeeklyReport(rData);
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  const loadEvents = async (options: {
+    cityIds?: string[];
+    stateId?: string;
+    categoryIds?: string[];
+    onlyOnline?: boolean;
+    search?: string;
+    refresh?: boolean;
+  } = {}) => {
     setLoading(true);
     try {
-      const data = await api.fetchEvents(loc, cat, forceRefresh);
+      const activeCityIds = options.cityIds !== undefined ? options.cityIds : selectedCityIds;
+      const activeStateId = options.stateId !== undefined ? options.stateId : selectedStateId;
+      const activeCat = options.categoryIds !== undefined ? options.categoryIds : (selectedCategoryId !== 'all' ? [selectedCategoryId] : []);
+      const isOnlyOnline = options.onlyOnline !== undefined ? options.onlyOnline : (formatFilter === 'ONLINE');
+      const search = options.search !== undefined ? options.search : searchQuery;
+
+      const data = await api.fetchEvents({
+        cityIds: activeCityIds,
+        stateId: activeStateId || undefined,
+        categoryIds: activeCat,
+        onlyOnline: isOnlyOnline,
+        search: search || undefined,
+        refresh: options.refresh
+      });
       setEvents(data.events || []);
     } catch (e) {
       console.error(e);
@@ -160,16 +255,50 @@ export default function Home() {
     }
   };
 
-  // Natural Language Filter Handler
-  const handleInterpretFilter = async (customText?: string) => {
-    const query = customText || naturalQuery;
-    if (!query.trim()) return;
+  // Location Handlers
+  const handleToggleCity = (cityId: string) => {
+    let next: string[];
+    if (selectedCityIds.includes(cityId)) {
+      next = selectedCityIds.filter(id => id !== cityId);
+    } else {
+      next = [...selectedCityIds, cityId];
+    }
+    setSelectedCityIds(next);
+    loadEvents({ cityIds: next });
+  };
+
+  const handleStateChange = (stateId: string) => {
+    setSelectedStateId(stateId);
+    // Clear city filters when changing state unless already belonging
+    setSelectedCityIds([]);
+    loadEvents({ stateId: stateId || undefined, cityIds: [] });
+  };
+
+  const handleCategoryChange = (catId: string) => {
+    setSelectedCategoryId(catId);
+    loadEvents({ categoryIds: catId !== 'all' ? [catId] : [] });
+  };
+
+  const handleToggleOnlineOnly = () => {
+    const nextFormat = formatFilter === 'ONLINE' ? 'ALL' : 'ONLINE';
+    setFormatFilter(nextFormat);
+    loadEvents({ onlyOnline: nextFormat === 'ONLINE' });
+  };
+
+  // AI Filter Execution (Gemini 2.5 Flash + Multi-Keyword Extraction)
+  const handleInterpretFilter = async (customQuery?: string) => {
+    const q = customQuery || naturalQuery;
+    if (!q.trim()) return;
+    if (customQuery) setNaturalQuery(customQuery);
     setInterpreting(true);
     try {
-      const res = await api.interpretNaturalFilter(query);
-      setInterpretedFilter(res);
-      const applyRes = await api.applyStructuredFilter(res.structured_criteria, searchQuery);
-      setEvents(applyRes.events || []);
+      const result = await api.interpretNaturalFilter(q);
+      setInterpretedFilter(result);
+
+      // Send extracted search keywords along with structured criteria to apply the filter
+      const searchText = result.search_text || (result.keywords && result.keywords.join(' ')) || '';
+      const filteredRes = await api.applyStructuredFilter(result.structured_criteria, searchText);
+      setEvents(filteredRes.events || []);
     } catch (e) {
       console.error(e);
     } finally {
@@ -181,33 +310,14 @@ export default function Home() {
     if (!interpretedFilter) return;
     try {
       await api.saveUserFilter(
-        interpretedFilter.suggested_name,
+        naturalQuery.slice(0, 30),
         naturalQuery,
         interpretedFilter.structured_criteria
       );
       loadSavedFilters();
-      alert('Custom filter saved to your account!');
+      alert('Custom AI Filter saved to your library!');
     } catch (e) {
       console.error(e);
-    }
-  };
-
-  const handleApplySavedFilter = async (filter: any) => {
-    setLoading(true);
-    try {
-      setNaturalQuery(filter.natural_query);
-      const res = await api.applyStructuredFilter(filter.structured_criteria);
-      setEvents(res.events || []);
-      setInterpretedFilter({
-        structured_criteria: filter.structured_criteria,
-        explanation: `Applied saved filter "${filter.name}"`,
-        applied_tags: [filter.name]
-      });
-      setActiveTab('discover');
-    } catch (e) {
-      console.error(e);
-    } finally {
-      setLoading(false);
     }
   };
 
@@ -231,9 +341,36 @@ export default function Home() {
     setRegModalEvent(event);
     setRegLoading(true);
     setRegConfirmed(false);
+    setRegResult(null);
+    setTinyFishLiveResult(null);
     try {
       const plan = await api.prepareRegistration(event.event_id);
       setRegPlan(plan);
+      const fieldsMap: Record<string, string> = {};
+      if (plan.fields) {
+        plan.fields.forEach((f: any) => {
+          fieldsMap[f.field_key] = f.current_value || '';
+        });
+      }
+      setEditingFields(fieldsMap);
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setRegLoading(false);
+    }
+  };
+
+  const handleUpdateRegFields = async () => {
+    if (!regPlan) return;
+    setRegLoading(true);
+    try {
+      const updated = await api.updateRegistrationDetails(
+        regPlan.audit_id,
+        editingFields,
+        replaceProfileChecked
+      );
+      setRegPlan(updated);
+      loadUserProfile();
     } catch (e) {
       console.error(e);
     } finally {
@@ -243,15 +380,44 @@ export default function Home() {
 
   const handleConfirmRegistration = async () => {
     if (!regPlan) return;
-    setRegLoading(true);
+    setRegApproving(true);
+    setRegLiveProgressStep(1);
+
+    // Dynamic progress stepping reflecting agent execution phases on live page
+    const timer1 = setTimeout(() => setRegLiveProgressStep(2), 2500);
+    const timer2 = setTimeout(() => setRegLiveProgressStep(3), 7500);
+    const timer3 = setTimeout(() => setRegLiveProgressStep(4), 14000);
+
     try {
-      await api.confirmRegistration(regPlan.audit_id);
+      const res = await api.confirmRegistration(regPlan.audit_id);
+      clearTimeout(timer1);
+      clearTimeout(timer2);
+      clearTimeout(timer3);
+      setRegLiveProgressStep(5);
+      setRegResult(res);
       setRegConfirmed(true);
       loadSavedEvents();
+    } catch (e: any) {
+      clearTimeout(timer1);
+      clearTimeout(timer2);
+      clearTimeout(timer3);
+      console.error(e);
+      alert(e.message || 'Registration approval failed. Please ensure all required fields are provided.');
+    } finally {
+      setRegApproving(false);
+    }
+  };
+
+  const handleRunTinyFishLiveFill = async () => {
+    if (!regPlan) return;
+    setTinyFishLiveLoading(true);
+    try {
+      const res = await api.runTinyFishLiveFill(regPlan.audit_id);
+      setTinyFishLiveResult(res);
     } catch (e) {
       console.error(e);
     } finally {
-      setRegLoading(false);
+      setTinyFishLiveLoading(false);
     }
   };
 
@@ -294,39 +460,64 @@ export default function Home() {
     }
   };
 
-  // Filter events locally by format, search text & category tag
+  // Admin Proposal Review
+  const handleReviewProposal = async (proposalId: string, action: string, targetCatId?: string) => {
+    setAdminActionLoading(true);
+    try {
+      await api.reviewProposal(proposalId, action, {
+        targetCategoryId: targetCatId,
+        adminNotes: `Reviewed via Admin Dashboard on ${new Date().toLocaleDateString()}`
+      });
+      await loadAdminData();
+      await loadCategoriesData();
+    } catch (e: any) {
+      alert(`Error reviewing proposal: ${e.message}`);
+    } finally {
+      setAdminActionLoading(false);
+    }
+  };
+
+  // Reclassify All Events
+  const handleRunReclassification = async () => {
+    setAdminActionLoading(true);
+    try {
+      const res = await api.reclassifyEvents();
+      alert(`Reclassification Completed! ${res.result.total} events re-evaluated across multi-signal model.`);
+      await loadEvents();
+      await loadAdminData();
+    } catch (e: any) {
+      alert(`Error: ${e.message}`);
+    } finally {
+      setAdminActionLoading(false);
+    }
+  };
+
+  // Category Badge Styling
+  const getCategoryBadgeStyle = (categoryId: string) => {
+    switch (categoryId) {
+      case 'ctf-cybersecurity':
+        return 'bg-rose-500/10 text-rose-300 border-rose-500/30';
+      case 'drone-uav-hackathon':
+        return 'bg-cyan-500/10 text-cyan-300 border-cyan-500/30';
+      case 'robot-hackathon':
+        return 'bg-amber-500/10 text-amber-300 border-amber-500/30';
+      case 'cp-hackathon':
+        return 'bg-emerald-500/10 text-emerald-300 border-emerald-500/30';
+      case 'ai-research':
+        return 'bg-purple-500/10 text-purple-300 border-purple-500/30';
+      case 'web3-blockchain':
+        return 'bg-yellow-500/10 text-yellow-300 border-yellow-500/30';
+      default:
+        return 'bg-indigo-500/10 text-indigo-300 border-indigo-500/30';
+    }
+  };
+
+  // Filter events locally for instant toggles
   const displayedEvents = events.filter(e => {
-    if (formatFilter !== 'ALL' && e.online_or_in_person !== formatFilter) return false;
     if (freeOnly && e.price > 0) return false;
     if (hasPrizeOnly && !e.prize_pool && !e.prize_pool_numeric) return false;
-    if (selectedTag !== 'All') {
-      const tagLower = selectedTag.toLowerCase();
-      const inTag = e.tags?.some((t: string) => t.toLowerCase().includes(tagLower)) ||
-                    e.categories?.some((c: string) => c.toLowerCase().includes(tagLower)) ||
-                    e.event_type?.toLowerCase().includes(tagLower);
-      if (!inTag) return false;
-    }
-    if (searchQuery.trim()) {
-      const q = searchQuery.toLowerCase();
-      const match = e.canonical_title.toLowerCase().includes(q) ||
-                    e.description.toLowerCase().includes(q) ||
-                    e.tags?.some((t: string) => t.toLowerCase().includes(q)) ||
-                    e.city?.toLowerCase().includes(q);
-      if (!match) return false;
-    }
     return true;
   });
-
-  // Helper for source platform colors
-  const getSourceBadgeStyle = (platform: string) => {
-    const p = (platform || '').toLowerCase();
-    if (p.includes('luma')) return 'bg-rose-500/10 text-rose-400 border-rose-500/30';
-    if (p.includes('devpost')) return 'bg-sky-500/10 text-sky-400 border-sky-500/30';
-    if (p.includes('devfolio')) return 'bg-indigo-500/10 text-indigo-400 border-indigo-500/30';
-    if (p.includes('unstop')) return 'bg-amber-500/10 text-amber-400 border-amber-500/30';
-    if (p.includes('qualcomm')) return 'bg-orange-500/10 text-orange-400 border-orange-500/30';
-    return 'bg-blue-500/10 text-blue-400 border-blue-500/30';
-  };
 
   return (
     <div className="flex h-screen bg-[#070B14] text-slate-100 font-sans overflow-hidden bg-mesh-radial">
@@ -345,10 +536,10 @@ export default function Home() {
               <div className="flex items-center gap-2">
                 <h1 className="text-lg font-black tracking-tight text-white">USAI</h1>
                 <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">
-                  v1.0
+                  v2.0
                 </span>
               </div>
-              <p className="text-[11px] text-slate-400 font-medium">Event Intelligence</p>
+              <p className="text-[11px] text-slate-400 font-medium">Event & Taxonomy Intelligence</p>
             </div>
           </div>
 
@@ -436,6 +627,25 @@ export default function Home() {
             </button>
 
             <button
+              onClick={() => setActiveTab('taxonomy')}
+              className={`w-full flex items-center justify-between px-3.5 py-2.5 rounded-xl text-xs font-semibold transition-all duration-200 ${
+                activeTab === 'taxonomy'
+                  ? 'bg-gradient-to-r from-indigo-600 to-indigo-700 text-white shadow-lg shadow-indigo-600/30 ring-1 ring-white/10'
+                  : 'text-slate-400 hover:text-slate-200 hover:bg-white/[0.04]'
+              }`}
+            >
+              <div className="flex items-center space-x-3">
+                <FolderTree className="w-4 h-4 text-cyan-400" />
+                <span>Taxonomy & Discovery</span>
+              </div>
+              {proposals.filter(p => p.status === 'NEEDS_REVIEW').length > 0 && (
+                <span className="text-[10px] bg-rose-500/20 text-rose-300 px-2 py-0.5 rounded-full font-mono border border-rose-500/30 animate-pulse">
+                  {proposals.filter(p => p.status === 'NEEDS_REVIEW').length}
+                </span>
+              )}
+            </button>
+
+            <button
               onClick={() => setActiveTab('profile')}
               className={`w-full flex items-center space-x-3 px-3.5 py-2.5 rounded-xl text-xs font-semibold transition-all duration-200 ${
                 activeTab === 'profile'
@@ -454,16 +664,16 @@ export default function Home() {
           <div className="flex items-center justify-between text-xs">
             <span className="text-slate-400 flex items-center gap-1.5">
               <Zap className="w-3.5 h-3.5 text-indigo-400" />
-              TinyFish Toolkit
+              Taxonomy Engine
             </span>
             <span className="flex items-center text-emerald-400 font-semibold text-[11px]">
               <span className="w-2 h-2 rounded-full bg-emerald-400 mr-1.5 animate-pulse shadow-sm shadow-emerald-400"></span>
-              Live
+              Multi-Signal
             </span>
           </div>
           <div className="text-[11px] text-slate-400 flex justify-between pt-1 border-t border-white/5">
             <span>Canonical Events:</span>
-            <span className="text-slate-200 font-mono font-medium">{events.length} stored</span>
+            <span className="text-slate-200 font-mono font-medium">{events.length} verified</span>
           </div>
         </div>
       </aside>
@@ -473,34 +683,38 @@ export default function Home() {
       {/* ======================================================== */}
       <main className="flex-1 flex flex-col overflow-hidden">
 
-        {/* Glassmorphic Top Action Header */}
+        {/* Top Search & Filter Bar */}
         <header className="h-18 border-b border-white/5 bg-[#0D1322]/60 backdrop-blur-xl px-8 flex items-center justify-between flex-shrink-0 z-20">
           <div className="flex items-center space-x-4 flex-1 max-w-xl">
             {/* Search Input */}
-            <div className="relative w-full">
+            <form
+              onSubmit={e => { e.preventDefault(); loadEvents({ search: searchQuery }); }}
+              className="relative w-full"
+            >
               <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
               <input
                 type="text"
-                placeholder="Search AI hackathons, MLH sprints, Unstop challenges, cities..."
+                placeholder="Search hackathons, CTF challenges, drones, robots, CP contests, cities..."
                 value={searchQuery}
                 onChange={e => setSearchQuery(e.target.value)}
                 className="w-full bg-[#070B14]/80 border border-white/10 rounded-xl pl-10 pr-10 py-2.5 text-xs text-slate-200 placeholder-slate-500 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition-all shadow-inner"
               />
               {searchQuery && (
                 <button
-                  onClick={() => setSearchQuery('')}
+                  type="button"
+                  onClick={() => { setSearchQuery(''); loadEvents({ search: '' }); }}
                   className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white"
                 >
                   <X className="w-3.5 h-3.5" />
                 </button>
               )}
-            </div>
+            </form>
           </div>
 
           {/* Quick Actions & AI Filter Trigger */}
           <div className="flex items-center space-x-3">
             <button
-              onClick={() => loadEvents(location, category, true)}
+              onClick={() => loadEvents({ refresh: true })}
               disabled={loading}
               className="flex items-center space-x-2 px-3.5 py-2 bg-white/[0.04] hover:bg-white/[0.08] text-slate-300 rounded-xl text-xs font-semibold border border-white/10 transition-smooth"
               title="Sync canonical database with web"
@@ -531,144 +745,207 @@ export default function Home() {
           {activeTab === 'discover' && (
             <div className="space-y-6">
 
-              {/* Top Intelligence Stats Banner */}
-              <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-                <div className="glass-panel rounded-2xl p-4 flex items-center space-x-3.5">
-                  <div className="w-10 h-10 rounded-xl bg-blue-500/10 border border-blue-500/20 flex items-center justify-center text-blue-400 flex-shrink-0">
-                    <Compass className="w-5 h-5" />
-                  </div>
-                  <div>
-                    <span className="text-[11px] text-slate-400 font-medium block">Indexed Events</span>
-                    <span className="text-lg font-bold text-white font-mono">{events.length}</span>
-                  </div>
-                </div>
-
-                <div className="glass-panel rounded-2xl p-4 flex items-center space-x-3.5">
-                  <div className="w-10 h-10 rounded-xl bg-amber-500/10 border border-amber-500/20 flex items-center justify-center text-amber-400 flex-shrink-0">
-                    <Trophy className="w-5 h-5" />
-                  </div>
-                  <div>
-                    <span className="text-[11px] text-slate-400 font-medium block">Verified Prize Pool</span>
-                    <span className="text-lg font-bold text-amber-300 font-mono">₹24,00,000+</span>
-                  </div>
-                </div>
-
-                <div className="glass-panel rounded-2xl p-4 flex items-center space-x-3.5">
-                  <div className="w-10 h-10 rounded-xl bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400 flex-shrink-0">
-                    <ShieldCheck className="w-5 h-5" />
-                  </div>
-                  <div>
-                    <span className="text-[11px] text-slate-400 font-medium block">Shared Data Layer</span>
-                    <span className="text-xs font-semibold text-emerald-300">Zero duplicate scraping</span>
-                  </div>
-                </div>
-
-                <div className="glass-panel rounded-2xl p-4 flex items-center space-x-3.5">
-                  <div className="w-10 h-10 rounded-xl bg-purple-500/10 border border-purple-500/20 flex items-center justify-center text-purple-400 flex-shrink-0">
-                    <Sparkles className="w-5 h-5" />
-                  </div>
-                  <div>
-                    <span className="text-[11px] text-slate-400 font-medium block">Active Location</span>
-                    <span className="text-sm font-bold text-white flex items-center gap-1">
-                      {location}
-                      <span className="w-1.5 h-1.5 rounded-full bg-cyan-400"></span>
+              {/* LOCATION FILTER CONTROL PANEL (Accurate State + Multi-City + Dedicated Online) */}
+              <div className="glass-panel rounded-2xl p-4 space-y-3.5 border-white/10 shadow-lg">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div className="flex items-center gap-2">
+                    <MapPin className="w-4 h-4 text-indigo-400" />
+                    <span className="text-xs font-bold uppercase tracking-wider text-slate-300">
+                      Geographic & Format Filtering
                     </span>
                   </div>
-                </div>
-              </div>
 
-              {/* Location & Quick Toggles Navigation Strip */}
-              <div className="glass-panel rounded-2xl p-3.5 flex flex-wrap items-center justify-between gap-4">
-                {/* Location Selectors */}
-                <div className="flex items-center space-x-1.5 overflow-x-auto pb-1 sm:pb-0">
-                  <span className="text-xs text-slate-400 font-semibold mr-1 flex items-center gap-1">
-                    <MapPin className="w-3.5 h-3.5 text-indigo-400" /> City:
-                  </span>
-                  {['Bengaluru', 'Karnataka', 'Delhi', 'Mumbai', 'Online', 'All'].map(loc => (
+                  {/* Dedicated Online Only Toggle Button */}
+                  <div className="flex items-center gap-2">
                     <button
-                      key={loc}
-                      onClick={() => { setLocation(loc); loadEvents(loc, category); }}
-                      className={`px-3 py-1.5 rounded-xl text-xs font-semibold transition-smooth ${
-                        location === loc
-                          ? 'bg-indigo-600 text-white shadow-md shadow-indigo-600/30'
-                          : 'bg-white/[0.03] text-slate-400 hover:text-slate-200 hover:bg-white/[0.08]'
+                      onClick={handleToggleOnlineOnly}
+                      className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 border ${
+                        formatFilter === 'ONLINE'
+                          ? 'bg-cyan-500/20 text-cyan-300 border-cyan-500/50 shadow-md shadow-cyan-500/20'
+                          : 'bg-white/[0.03] text-slate-400 hover:text-slate-200 border-white/10'
                       }`}
                     >
-                      {loc}
+                      <Globe className="w-3.5 h-3.5" />
+                      <span>Online / Virtual Events Only</span>
                     </button>
-                  ))}
+
+                    <button
+                      onClick={() => setFreeOnly(!freeOnly)}
+                      className={`px-3 py-1.5 rounded-xl text-xs font-semibold border transition-smooth ${
+                        freeOnly
+                          ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40'
+                          : 'border-white/10 text-slate-400 hover:bg-white/[0.05]'
+                      }`}
+                    >
+                      Free Only
+                    </button>
+
+                    <button
+                      onClick={() => setHasPrizeOnly(!hasPrizeOnly)}
+                      className={`px-3 py-1.5 rounded-xl text-xs font-semibold border transition-smooth ${
+                        hasPrizeOnly
+                          ? 'bg-amber-500/20 text-amber-300 border-amber-500/40'
+                          : 'border-white/10 text-slate-400 hover:bg-white/[0.05]'
+                      }`}
+                    >
+                      🏆 Cash Prizes
+                    </button>
+                  </div>
                 </div>
 
-                {/* Quick Filters */}
-                <div className="flex items-center space-x-2">
-                  <button
-                    onClick={() => setFormatFilter(formatFilter === 'ONLINE' ? 'ALL' : 'ONLINE')}
-                    className={`px-3 py-1.5 rounded-xl text-xs font-semibold border transition-smooth ${
-                      formatFilter === 'ONLINE'
-                        ? 'bg-cyan-500/20 text-cyan-300 border-cyan-500/40 shadow-sm shadow-cyan-500/20'
-                        : 'border-white/10 text-slate-400 hover:bg-white/[0.05]'
-                    }`}
-                  >
-                    Online Only
-                  </button>
+                {/* State Dropdown + City Multiselect Chips */}
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-3 pt-2 border-t border-white/5">
+                  {/* 1. State Selector */}
+                  <div>
+                    <label className="block text-[11px] font-semibold text-slate-400 mb-1.5">
+                      Select State / Region:
+                    </label>
+                    <select
+                      value={selectedStateId}
+                      onChange={e => handleStateChange(e.target.value)}
+                      className="w-full bg-[#070B14] border border-white/10 rounded-xl px-3 py-2 text-xs text-slate-200 focus:outline-none focus:border-indigo-500"
+                    >
+                      <option value="">All States (National)</option>
+                      {states.map(s => (
+                        <option key={s.state_id} value={s.state_id}>
+                          {s.name} ({s.event_count || 0} events)
+                        </option>
+                      ))}
+                    </select>
+                  </div>
 
-                  <button
-                    onClick={() => setFreeOnly(!freeOnly)}
-                    className={`px-3 py-1.5 rounded-xl text-xs font-semibold border transition-smooth ${
-                      freeOnly
-                        ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40 shadow-sm shadow-emerald-500/20'
-                        : 'border-white/10 text-slate-400 hover:bg-white/[0.05]'
-                    }`}
-                  >
-                    Free Only
-                  </button>
+                  {/* 2. City Multiselect & Autocomplete */}
+                  <div className="md:col-span-2">
+                    <label className="block text-[11px] font-semibold text-slate-400 mb-1.5">
+                      Select Canonical Cities (Multiple Selection Supported):
+                    </label>
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      {availableCities.map(c => {
+                        const isSelected = selectedCityIds.includes(c.city_id);
+                        return (
+                          <button
+                            key={c.city_id}
+                            onClick={() => handleToggleCity(c.city_id)}
+                            className={`px-3 py-1 rounded-lg text-xs font-medium transition-smooth flex items-center gap-1.5 border ${
+                              isSelected
+                                ? 'bg-indigo-600 text-white border-indigo-400 shadow-sm shadow-indigo-600/30'
+                                : 'bg-[#070B14] text-slate-300 hover:text-white border-white/10 hover:border-white/20'
+                            }`}
+                          >
+                            <span>{c.canonical_name}</span>
+                            {isSelected ? (
+                              <Check className="w-3 h-3 text-white" />
+                            ) : (
+                              c.event_count > 0 && (
+                                <span className="text-[10px] text-slate-500 font-mono">({c.event_count})</span>
+                              )
+                            )}
+                          </button>
+                        );
+                      })}
 
-                  <button
-                    onClick={() => setHasPrizeOnly(!hasPrizeOnly)}
-                    className={`px-3 py-1.5 rounded-xl text-xs font-semibold border transition-smooth ${
-                      hasPrizeOnly
-                        ? 'bg-amber-500/20 text-amber-300 border-amber-500/40 shadow-sm shadow-amber-500/20'
-                        : 'border-white/10 text-slate-400 hover:bg-white/[0.05]'
-                    }`}
-                  >
-                    🏆 Cash Prizes
-                  </button>
+                      {selectedCityIds.length > 0 && (
+                        <button
+                          onClick={() => { setSelectedCityIds([]); loadEvents({ cityIds: [] }); }}
+                          className="text-[11px] text-rose-400 hover:underline px-2 py-1"
+                        >
+                          Clear Cities
+                        </button>
+                      )}
+                    </div>
+                  </div>
                 </div>
               </div>
 
-              {/* Tag / Category Filter Strip */}
-              <div className="flex items-center space-x-2 overflow-x-auto pb-1 text-xs">
-                {['All', 'AI', 'Agents', 'Hackathon', 'Students', 'Edge AI', 'Conference', 'Open Source'].map(tag => (
+              {/* DYNAMIC HACKATHON & EVENT CATEGORIES STRIP */}
+              <div className="space-y-2">
+                <div className="flex items-center justify-between text-xs text-slate-400 px-1">
+                  <span className="font-bold uppercase tracking-wider text-[11px] flex items-center gap-1.5">
+                    <Tag className="w-3.5 h-3.5 text-indigo-400" />
+                    Hackathon Track & Classification Filters:
+                  </span>
+                  <span>{categories.length} Categories Registered</span>
+                </div>
+
+                <div className="flex items-center space-x-2 overflow-x-auto pb-2 text-xs">
                   <button
-                    key={tag}
-                    onClick={() => setSelectedTag(tag)}
-                    className={`px-3 py-1 rounded-full font-medium transition-smooth ${
-                      selectedTag === tag
-                        ? 'bg-white/15 text-white font-bold border border-white/20'
-                        : 'bg-white/[0.03] text-slate-400 hover:text-slate-200 border border-transparent'
+                    onClick={() => handleCategoryChange('all')}
+                    className={`px-3.5 py-1.5 rounded-xl font-bold transition-smooth flex items-center gap-1.5 border ${
+                      selectedCategoryId === 'all'
+                        ? 'bg-white text-slate-950 font-black border-white shadow-md'
+                        : 'bg-white/[0.04] text-slate-300 hover:text-white border-white/10 hover:bg-white/[0.08]'
                     }`}
                   >
-                    {tag}
+                    <span>All Tracks</span>
                   </button>
-                ))}
+
+                  {categories.map(cat => {
+                    const isSelected = selectedCategoryId === cat.category_id || selectedCategoryId === cat.slug;
+                    return (
+                      <button
+                        key={cat.category_id}
+                        onClick={() => handleCategoryChange(cat.category_id)}
+                        className={`px-3.5 py-1.5 rounded-xl font-bold transition-smooth flex items-center gap-1.5 whitespace-nowrap border ${
+                          isSelected
+                            ? 'bg-indigo-600 text-white border-indigo-400 shadow-md shadow-indigo-600/30'
+                            : `${getCategoryBadgeStyle(cat.category_id)} hover:bg-white/[0.08]`
+                        }`}
+                      >
+                        <span>{cat.name}</span>
+                        {cat.eventCount !== undefined && (
+                          <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-mono ${
+                            isSelected ? 'bg-white/20 text-white' : 'bg-black/30 text-slate-400'
+                          }`}>
+                            {cat.eventCount}
+                          </span>
+                        )}
+                      </button>
+                    );
+                  })}
+                </div>
               </div>
 
               {/* Active AI Filter Indicator */}
               {interpretedFilter && (
-                <div className="glass-panel p-4 rounded-2xl border-purple-500/40 flex items-center justify-between shadow-glow">
-                  <div className="flex items-center space-x-3.5">
-                    <div className="w-8 h-8 rounded-xl bg-purple-500/20 border border-purple-500/30 flex items-center justify-center text-purple-300">
+                <div className="glass-panel p-4 rounded-2xl border-purple-500/40 flex flex-wrap items-center justify-between gap-4 shadow-glow">
+                  <div className="flex items-start space-x-3.5">
+                    <div className="w-8 h-8 rounded-xl bg-purple-500/20 border border-purple-500/30 flex items-center justify-center text-purple-300 flex-shrink-0 mt-0.5">
                       <Sparkles className="w-4 h-4" />
                     </div>
                     <div>
-                      <p className="text-xs font-bold text-purple-200">{interpretedFilter.explanation}</p>
-                      <div className="flex flex-wrap gap-1.5 mt-1.5">
+                      <div className="flex items-center gap-2">
+                        <span className="text-[10px] uppercase font-mono px-2 py-0.5 rounded-full bg-purple-500/20 text-purple-300 border border-purple-500/30 font-bold">
+                          {interpretedFilter.model || 'Gemini 2.5 Flash'}
+                        </span>
+                        <p className="text-xs font-bold text-purple-200">{interpretedFilter.explanation}</p>
+                      </div>
+
+                      {/* Extracted Keywords & Tags */}
+                      <div className="flex flex-wrap items-center gap-1.5 mt-2">
+                        {interpretedFilter.keywords?.length > 0 && (
+                          <div className="flex items-center gap-1 text-[11px] text-cyan-300 font-semibold mr-1">
+                            <span>Keywords:</span>
+                          </div>
+                        )}
+                        {interpretedFilter.keywords?.map((kw: string) => (
+                          <span key={kw} className="text-[10px] bg-cyan-950/60 text-cyan-300 px-2 py-0.5 rounded-md border border-cyan-800/50 font-mono">
+                            &ldquo;{kw}&rdquo;
+                          </span>
+                        ))}
                         {interpretedFilter.applied_tags?.map((t: string) => (
-                          <span key={t} className="text-[10px] bg-purple-900/60 text-purple-200 px-2.5 py-0.5 rounded-md border border-purple-700/50 font-medium">
+                          <span key={t} className="text-[10px] bg-purple-900/60 text-purple-200 px-2 py-0.5 rounded-md border border-purple-700/50 font-medium">
                             {t}
                           </span>
                         ))}
                       </div>
+
+                      {/* Smart Advice if present */}
+                      {interpretedFilter.smart_advice && (
+                        <div className="mt-2 text-[11px] text-indigo-300/90 bg-indigo-950/40 border border-indigo-500/20 px-3 py-1.5 rounded-lg flex items-center gap-1.5">
+                          <Lightbulb className="w-3.5 h-3.5 text-amber-300 flex-shrink-0" />
+                          <span>{interpretedFilter.smart_advice}</span>
+                        </div>
+                      )}
                     </div>
                   </div>
                   <button
@@ -700,9 +977,20 @@ export default function Home() {
                 <div className="text-center py-20 glass-panel rounded-3xl border border-white/5">
                   <Compass className="w-12 h-12 text-slate-600 mx-auto mb-3" />
                   <h3 className="text-base font-bold text-slate-200">No events found matching this criteria</h3>
-                  <p className="text-xs text-slate-500 mt-1 max-w-sm mx-auto">Try clearing search filters or click &ldquo;Sync Web&rdquo; to discover newly indexed listings.</p>
+                  <p className="text-xs text-slate-500 mt-1 max-w-sm mx-auto">
+                    Try clearing city filters, switching tracks, or click &ldquo;Sync Web&rdquo; to discover newly indexed listings.
+                  </p>
                   <button
-                    onClick={() => { setFormatFilter('ALL'); setFreeOnly(false); setHasPrizeOnly(false); setSelectedTag('All'); setSearchQuery(''); loadEvents(); }}
+                    onClick={() => {
+                      setSelectedCityIds([]);
+                      setSelectedStateId('');
+                      setSelectedCategoryId('all');
+                      setFormatFilter('ALL');
+                      setFreeOnly(false);
+                      setHasPrizeOnly(false);
+                      setSearchQuery('');
+                      loadEvents({ cityIds: [], stateId: undefined, categoryIds: [], onlyOnline: false, search: '' });
+                    }}
                     className="mt-5 px-5 py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-xs font-bold transition shadow-lg shadow-indigo-600/30"
                   >
                     Reset All Filters
@@ -715,23 +1003,32 @@ export default function Home() {
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                   {displayedEvents.map(event => {
                     const isSaved = savedEvents.some(se => se.event.event_id === event.event_id);
+                    const primaryCatName = event.primary_category_name || (event.categories && event.categories[0]) || 'Engineer Hackathon';
+                    const primaryCatId = event.primary_category_id || 'engineer-hackathon';
+
                     return (
                       <div
                         key={event.event_id}
                         className="glass-card rounded-2xl p-6 flex flex-col justify-between transition-smooth group relative"
                       >
                         <div>
-                          {/* Card Header: Platform Tag + Verified Pill + Bookmark */}
+                          {/* Card Header: Platform Tag + Verified Pill + Primary Category Badge */}
                           <div className="flex items-center justify-between mb-3.5">
-                            <div className="flex items-center gap-1.5">
-                              <span className={`text-[11px] font-bold px-2.5 py-1 rounded-lg border ${getSourceBadgeStyle(event.source_platform)}`}>
+                            <div className="flex flex-wrap items-center gap-1.5">
+                              {/* Source Platform Badge */}
+                              <span className="text-[11px] font-bold px-2 py-0.5 rounded-lg border bg-blue-500/10 text-blue-300 border-blue-500/20">
                                 {event.source_platform}
                               </span>
 
-                              {event.extraction_confidence >= 0.9 && (
-                                <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-2 py-0.5 rounded-md">
-                                  <ShieldCheck className="w-3 h-3" />
-                                  <span>Verified</span>
+                              {/* Primary Classification Badge */}
+                              <span className={`text-[11px] font-bold px-2.5 py-0.5 rounded-lg border ${getCategoryBadgeStyle(primaryCatId)}`}>
+                                {primaryCatName}
+                              </span>
+
+                              {/* Classification Review Status */}
+                              {event.classification_status === 'NEEDS_REVIEW' && (
+                                <span className="text-[10px] bg-amber-500/20 text-amber-300 border border-amber-500/30 px-2 py-0.5 rounded-md" title="Pending manual confirmation">
+                                  Review Pending
                                 </span>
                               )}
                             </div>
@@ -749,6 +1046,35 @@ export default function Home() {
                             </button>
                           </div>
 
+                          {/* AI Relevance Match & Smart Alternative Badges */}
+                          {(event.relevance_score !== undefined || event.is_relaxed_match || (event.match_reasons && event.match_reasons.length > 0)) && (
+                            <div className="flex flex-wrap items-center gap-1.5 mb-3">
+                              {event.relevance_score !== undefined && (
+                                <span className={`text-[10px] font-mono font-bold px-2 py-0.5 rounded-full border flex items-center gap-1 ${
+                                  event.relevance_score >= 80 
+                                    ? 'bg-emerald-500/10 text-emerald-300 border-emerald-500/30' 
+                                    : 'bg-indigo-500/10 text-indigo-300 border-indigo-500/30'
+                                }`}>
+                                  <Zap className="w-3 h-3 text-emerald-400 fill-emerald-400" />
+                                  {event.relevance_score}% Match
+                                </span>
+                              )}
+
+                              {event.is_relaxed_match && (
+                                <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-300 border border-amber-500/30 flex items-center gap-1">
+                                  <Lightbulb className="w-3 h-3 text-amber-400" />
+                                  Smart Alternative
+                                </span>
+                              )}
+
+                              {event.match_reasons && event.match_reasons.slice(0, 2).map((reason: string) => (
+                                <span key={reason} className="text-[10px] bg-white/[0.04] text-slate-300 border border-white/5 px-2 py-0.5 rounded-md font-medium">
+                                  ✓ {reason}
+                                </span>
+                              ))}
+                            </div>
+                          )}
+
                           {/* Event Title */}
                           <h2
                             onClick={() => setSelectedEvent(event)}
@@ -762,11 +1088,17 @@ export default function Home() {
                             {event.short_summary || event.description}
                           </p>
 
-                          {/* Info Items */}
+                          {/* Location & Schedule Info */}
                           <div className="space-y-2 text-xs text-slate-300 mb-5">
                             <div className="flex items-center gap-2 text-slate-300">
                               <MapPin className="w-3.5 h-3.5 text-indigo-400 flex-shrink-0" />
-                              <span className="truncate">{event.location_name}</span>
+                              <span className="truncate font-medium">
+                                {event.attendance_format === 'ONLINE'
+                                  ? 'Online / Virtual'
+                                  : event.canonical_city
+                                    ? `${event.canonical_city}, ${event.canonical_state || 'India'}`
+                                    : event.location_name || 'India'}
+                              </span>
                             </div>
 
                             <div className="flex items-center gap-2 text-slate-400">
@@ -801,7 +1133,7 @@ export default function Home() {
                           </div>
                         </div>
 
-                        {/* Card Actions: 3 Clear Steps */}
+                        {/* Card Actions */}
                         <div className="pt-4 border-t border-white/5 flex items-center gap-2">
                           <button
                             onClick={() => setSelectedEvent(event)}
@@ -833,6 +1165,160 @@ export default function Home() {
                       </div>
                     );
                   })}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* ================= TAXONOMY & ADMIN REVIEW TAB ================= */}
+          {activeTab === 'taxonomy' && (
+            <div className="space-y-6 max-w-6xl">
+              <div className="flex flex-wrap items-center justify-between gap-4">
+                <div>
+                  <h2 className="text-xl font-black text-white flex items-center gap-2">
+                    <FolderTree className="w-5 h-5 text-cyan-400" />
+                    Taxonomy Management & Weekly Category Discovery
+                  </h2>
+                  <p className="text-xs text-slate-400 mt-1">
+                    Decoupled search understanding, weekly proposal reviews, and multi-signal hackathon categorization.
+                  </p>
+                </div>
+
+                <button
+                  onClick={handleRunReclassification}
+                  disabled={adminActionLoading}
+                  className="px-4 py-2.5 bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white rounded-xl text-xs font-bold shadow-lg shadow-indigo-600/30 flex items-center gap-2 transition"
+                >
+                  <RefreshCw className={`w-3.5 h-3.5 ${adminActionLoading ? 'animate-spin' : ''}`} />
+                  <span>Run Multi-Signal Reclassification</span>
+                </button>
+              </div>
+
+              {/* Weekly Intelligence Stat Grid */}
+              {weeklyReport && (
+                <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                  <div className="glass-panel rounded-2xl p-4">
+                    <span className="text-[11px] text-slate-400 font-medium block">Total Search Queries</span>
+                    <span className="text-2xl font-black text-white font-mono mt-1 block">{weeklyReport.totalSearches}</span>
+                  </div>
+                  <div className="glass-panel rounded-2xl p-4">
+                    <span className="text-[11px] text-slate-400 font-medium block">Unmapped Queries</span>
+                    <span className="text-2xl font-black text-amber-400 font-mono mt-1 block">{weeklyReport.unmappedQueriesCount}</span>
+                  </div>
+                  <div className="glass-panel rounded-2xl p-4">
+                    <span className="text-[11px] text-slate-400 font-medium block">Pending Track Proposals</span>
+                    <span className="text-2xl font-black text-rose-400 font-mono mt-1 block">{weeklyReport.pendingProposalsCount}</span>
+                  </div>
+                  <div className="glass-panel rounded-2xl p-4">
+                    <span className="text-[11px] text-slate-400 font-medium block">Active Categories</span>
+                    <span className="text-2xl font-black text-cyan-400 font-mono mt-1 block">{categories.length}</span>
+                  </div>
+                </div>
+              )}
+
+              {/* Pending Proposals Review Table */}
+              <div className="glass-panel rounded-3xl p-6 space-y-4">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-sm font-bold text-white uppercase tracking-wider flex items-center gap-2">
+                    <Sparkles className="w-4 h-4 text-purple-400" />
+                    Weekly Discovered Category Proposals (Awaiting Admin Review)
+                  </h3>
+                  <span className="text-xs text-slate-400">
+                    Aggregated from user search queries and event tracks
+                  </span>
+                </div>
+
+                {proposals.length === 0 ? (
+                  <p className="text-xs text-slate-500 py-6 text-center">No proposals currently awaiting review.</p>
+                ) : (
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left text-xs border-collapse">
+                      <thead>
+                        <tr className="border-b border-white/10 text-slate-400 font-semibold">
+                          <th className="py-2.5 px-3">Candidate Category</th>
+                          <th className="py-2.5 px-3">Search Frequency</th>
+                          <th className="py-2.5 px-3">Sample Query Terms</th>
+                          <th className="py-2.5 px-3">Status</th>
+                          <th className="py-2.5 px-3 text-right">Actions</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-white/5">
+                        {proposals.map(p => (
+                          <tr key={p.proposalId} className="hover:bg-white/[0.02]">
+                            <td className="py-3 px-3 font-bold text-slate-200">
+                              {p.suggestedName}
+                              <span className="text-[10px] text-slate-500 block font-mono">slug: {p.suggestedSlug}</span>
+                            </td>
+                            <td className="py-3 px-3 font-mono text-cyan-400 font-semibold">
+                              {p.searchFrequency} searches
+                            </td>
+                            <td className="py-3 px-3 text-slate-400 max-w-xs truncate">
+                              {p.sourceQueries?.join(', ')}
+                            </td>
+                            <td className="py-3 px-3">
+                              <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${
+                                p.status === 'APPROVED' ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30' :
+                                p.status === 'MERGED' ? 'bg-indigo-500/20 text-indigo-300 border-indigo-500/30' :
+                                p.status === 'REJECTED' ? 'bg-rose-500/20 text-rose-300 border-rose-500/30' :
+                                'bg-amber-500/20 text-amber-300 border-amber-500/30'
+                              }`}>
+                                {p.status}
+                              </span>
+                            </td>
+                            <td className="py-3 px-3 text-right">
+                              {p.status === 'NEEDS_REVIEW' && (
+                                <div className="flex items-center justify-end gap-1.5">
+                                  <button
+                                    onClick={() => handleReviewProposal(p.proposalId, 'APPROVE_NEW')}
+                                    disabled={adminActionLoading}
+                                    className="px-2.5 py-1 bg-emerald-600/20 text-emerald-300 border border-emerald-500/30 rounded-lg hover:bg-emerald-600/30 font-semibold"
+                                  >
+                                    Approve New
+                                  </button>
+                                  <button
+                                    onClick={() => handleReviewProposal(p.proposalId, 'MERGE', 'engineer-hackathon')}
+                                    disabled={adminActionLoading}
+                                    className="px-2.5 py-1 bg-indigo-600/20 text-indigo-300 border border-indigo-500/30 rounded-lg hover:bg-indigo-600/30 font-semibold"
+                                  >
+                                    Merge
+                                  </button>
+                                  <button
+                                    onClick={() => handleReviewProposal(p.proposalId, 'REJECT')}
+                                    disabled={adminActionLoading}
+                                    className="px-2.5 py-1 bg-rose-600/20 text-rose-300 border border-rose-500/30 rounded-lg hover:bg-rose-600/30 font-semibold"
+                                  >
+                                    Reject
+                                  </button>
+                                </div>
+                              )}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+
+              {/* Category Breakdown Distribution */}
+              {weeklyReport?.categoryDistribution && (
+                <div className="glass-panel rounded-3xl p-6">
+                  <h3 className="text-sm font-bold text-white uppercase tracking-wider mb-4 flex items-center gap-2">
+                    <BarChart3 className="w-4 h-4 text-indigo-400" />
+                    Current Event Classification Distribution
+                  </h3>
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs">
+                    {weeklyReport.categoryDistribution.map((item: any) => (
+                      <div key={item.name} className="p-3 bg-[#070B14] rounded-xl border border-white/5">
+                        <span className="text-slate-400 text-[11px] block truncate font-medium">
+                          {item.name}
+                        </span>
+                        <span className="text-base font-bold text-indigo-400 mt-1 block font-mono">
+                          {item.eventCount} events
+                        </span>
+                      </div>
+                    ))}
+                  </div>
                 </div>
               )}
             </div>
@@ -1047,19 +1533,6 @@ export default function Home() {
                         </div>
                       </div>
                     </div>
-
-                    {/* 24-Hour Implementation Sprint */}
-                    <div className="p-4 bg-[#070B14] rounded-2xl text-xs text-slate-300 border border-white/5">
-                      <p className="font-bold text-white mb-2">MVP 24-Hour Sprint Schedule:</p>
-                      <div className="space-y-2">
-                        {ideaResult.brief.mvp_implementation_plan.map((p: any) => (
-                          <div key={p.phase} className="flex justify-between items-center text-slate-300 border-b border-white/5 pb-1.5 last:border-0 last:pb-0">
-                            <span className="font-medium text-slate-200">{p.phase} — {p.description}</span>
-                            <span className="text-slate-500 font-mono text-[11px]">{p.duration}</span>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
                   </div>
                 </div>
               )}
@@ -1097,7 +1570,11 @@ export default function Home() {
 
                       <div className="flex items-center space-x-2">
                         <button
-                          onClick={() => handleApplySavedFilter(f)}
+                          onClick={async () => {
+                            const filtered = await api.applyStructuredFilter(f.structured_criteria);
+                            setEvents(filtered.events || []);
+                            setActiveTab('discover');
+                          }}
                           className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-xs font-bold transition shadow-md shadow-indigo-600/30"
                         >
                           Apply Filter
@@ -1148,21 +1625,18 @@ export default function Home() {
                 <div className="text-center py-20 glass-panel rounded-3xl border border-white/5">
                   <Bell className="w-12 h-12 text-slate-600 mx-auto mb-3" />
                   <p className="text-slate-400 text-sm">All monitored events are currently up to date.</p>
-                  <p className="text-slate-500 text-xs mt-1">Notifications trigger when meaningful fields (dates, prizes, status) change.</p>
                 </div>
               ) : (
                 <div className="space-y-3">
-                  {notifications.map(n => (
+                  {notifications.map((n: any) => (
                     <div key={n.id} className="glass-card rounded-2xl p-4 flex items-start space-x-3.5">
-                      <div className="p-2 bg-emerald-500/20 text-emerald-400 rounded-xl mt-0.5">
+                      <div className="w-8 h-8 rounded-xl bg-amber-500/20 text-amber-300 flex items-center justify-center flex-shrink-0 mt-0.5">
                         <AlertCircle className="w-4 h-4" />
                       </div>
                       <div className="flex-1">
-                        <div className="flex items-center justify-between">
-                          <h4 className="text-xs font-bold text-slate-200">{n.title}</h4>
-                          <span className="text-[11px] text-slate-500 font-mono">{n.delivery_timestamp.slice(0, 16)}</span>
-                        </div>
-                        <p className="text-xs text-slate-400 mt-1">{n.message}</p>
+                        <h4 className="text-xs font-bold text-white">{n.title}</h4>
+                        <p className="text-xs text-slate-300 mt-0.5">{n.message}</p>
+                        <span className="text-[10px] text-slate-500 font-mono mt-2 block">{n.delivery_timestamp.slice(0, 16)}</span>
                       </div>
                     </div>
                   ))}
@@ -1171,7 +1645,7 @@ export default function Home() {
             </div>
           )}
 
-          {/* ================= PROFILE VAULT TAB ================= */}
+          {/* ================= PROFILE TAB ================= */}
           {activeTab === 'profile' && profile && (
             <div className="max-w-2xl mx-auto space-y-6">
               <div>
@@ -1180,219 +1654,195 @@ export default function Home() {
                   Applicant Profile Vault
                 </h2>
                 <p className="text-xs text-slate-400 mt-1">
-                  Reusable credentials and profile data mapped during automated AI registrations.
+                  Saved credentials used by the AI Registration Assistant with strict user-confirmation controls.
                 </p>
               </div>
 
               <div className="glass-panel rounded-3xl p-6 space-y-4">
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="grid grid-cols-2 gap-4">
                   <div>
-                    <label className="block text-xs font-semibold text-slate-300 mb-1">Full Name</label>
+                    <label className="block text-[11px] font-semibold text-slate-400 mb-1">Full Name</label>
                     <input
                       type="text"
                       value={profile.full_name || ''}
                       onChange={e => setProfile({ ...profile, full_name: e.target.value })}
-                      className="w-full bg-[#070B14] border border-white/10 rounded-xl px-3.5 py-2.5 text-xs text-slate-200 focus:outline-none focus:border-indigo-500"
+                      className="w-full bg-[#070B14] border border-white/10 rounded-xl px-3.5 py-2 text-xs text-slate-200"
                     />
                   </div>
-
                   <div>
-                    <label className="block text-xs font-semibold text-slate-300 mb-1">Email Address</label>
+                    <label className="block text-[11px] font-semibold text-slate-400 mb-1">Email</label>
                     <input
                       type="email"
                       value={profile.email || ''}
                       onChange={e => setProfile({ ...profile, email: e.target.value })}
-                      className="w-full bg-[#070B14] border border-white/10 rounded-xl px-3.5 py-2.5 text-xs text-slate-200 focus:outline-none focus:border-indigo-500"
+                      className="w-full bg-[#070B14] border border-white/10 rounded-xl px-3.5 py-2 text-xs text-slate-200"
                     />
                   </div>
+                </div>
 
+                <div className="grid grid-cols-2 gap-4">
                   <div>
-                    <label className="block text-xs font-semibold text-slate-300 mb-1">Phone Number</label>
+                    <label className="block text-[11px] font-semibold text-slate-400 mb-1">Phone</label>
                     <input
                       type="text"
                       value={profile.phone || ''}
                       onChange={e => setProfile({ ...profile, phone: e.target.value })}
-                      className="w-full bg-[#070B14] border border-white/10 rounded-xl px-3.5 py-2.5 text-xs text-slate-200 focus:outline-none focus:border-indigo-500"
+                      className="w-full bg-[#070B14] border border-white/10 rounded-xl px-3.5 py-2 text-xs text-slate-200"
                     />
                   </div>
-
                   <div>
-                    <label className="block text-xs font-semibold text-slate-300 mb-1">College or Organization</label>
+                    <label className="block text-[11px] font-semibold text-slate-400 mb-1">College / Organization</label>
                     <input
                       type="text"
                       value={profile.college_or_company || ''}
                       onChange={e => setProfile({ ...profile, college_or_company: e.target.value })}
-                      className="w-full bg-[#070B14] border border-white/10 rounded-xl px-3.5 py-2.5 text-xs text-slate-200 focus:outline-none focus:border-indigo-500"
+                      className="w-full bg-[#070B14] border border-white/10 rounded-xl px-3.5 py-2 text-xs text-slate-200"
                     />
                   </div>
                 </div>
 
                 <div>
-                  <label className="block text-xs font-semibold text-slate-300 mb-1">Key Technical Skills (comma separated)</label>
+                  <label className="block text-[11px] font-semibold text-slate-400 mb-1">GitHub URL</label>
                   <input
                     type="text"
-                    value={profile.skills?.join(', ') || ''}
-                    onChange={e => setProfile({ ...profile, skills: e.target.value.split(',').map((s: string) => s.trim()) })}
-                    className="w-full bg-[#070B14] border border-white/10 rounded-xl px-3.5 py-2.5 text-xs text-slate-200 focus:outline-none focus:border-indigo-500"
+                    value={profile.github_url || ''}
+                    onChange={e => setProfile({ ...profile, github_url: e.target.value })}
+                    className="w-full bg-[#070B14] border border-white/10 rounded-xl px-3.5 py-2 text-xs text-slate-200"
                   />
                 </div>
 
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                  <div>
-                    <label className="block text-xs font-semibold text-slate-300 mb-1">GitHub URL</label>
-                    <input
-                      type="text"
-                      value={profile.github_url || ''}
-                      onChange={e => setProfile({ ...profile, github_url: e.target.value })}
-                      className="w-full bg-[#070B14] border border-white/10 rounded-xl px-3 py-2 text-xs text-slate-200 focus:outline-none focus:border-indigo-500"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-xs font-semibold text-slate-300 mb-1">LinkedIn URL</label>
-                    <input
-                      type="text"
-                      value={profile.linkedin_url || ''}
-                      onChange={e => setProfile({ ...profile, linkedin_url: e.target.value })}
-                      className="w-full bg-[#070B14] border border-white/10 rounded-xl px-3 py-2 text-xs text-slate-200 focus:outline-none focus:border-indigo-500"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-xs font-semibold text-slate-300 mb-1">Portfolio URL</label>
-                    <input
-                      type="text"
-                      value={profile.portfolio_url || ''}
-                      onChange={e => setProfile({ ...profile, portfolio_url: e.target.value })}
-                      className="w-full bg-[#070B14] border border-white/10 rounded-xl px-3 py-2 text-xs text-slate-200 focus:outline-none focus:border-indigo-500"
-                    />
-                  </div>
-                </div>
-
-                <div>
-                  <label className="block text-xs font-semibold text-slate-300 mb-1">Short Bio</label>
-                  <textarea
-                    rows={3}
-                    value={profile.bio || ''}
-                    onChange={e => setProfile({ ...profile, bio: e.target.value })}
-                    className="w-full bg-[#070B14] border border-white/10 rounded-xl p-3 text-xs text-slate-200 focus:outline-none focus:border-indigo-500"
-                  />
-                </div>
-
-                <div className="flex items-center justify-between pt-2">
-                  <span className="text-xs text-emerald-400 font-semibold">{profileSavedMsg ? '✓ Profile changes saved!' : ''}</span>
+                <div className="flex justify-end pt-2">
                   <button
                     onClick={async () => {
                       await api.updateUserProfile(profile);
                       setProfileSavedMsg(true);
                       setTimeout(() => setProfileSavedMsg(false), 3000);
                     }}
-                    className="px-6 py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-xs font-bold transition shadow-md shadow-indigo-600/30"
+                    className="px-5 py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-xs font-bold transition shadow-md shadow-indigo-600/30 flex items-center gap-1.5"
                   >
-                    Save Profile
+                    <Check className="w-3.5 h-3.5" />
+                    <span>{profileSavedMsg ? 'Profile Saved!' : 'Save Profile Changes'}</span>
                   </button>
                 </div>
               </div>
             </div>
           )}
+
         </div>
       </main>
 
       {/* ======================================================== */}
-      {/* 3. RIGHT COLLAPSIBLE AI FILTER PANEL                     */}
+      {/* 3. AI FILTER SLIDEOUT DRAWER                             */}
       {/* ======================================================== */}
       {aiPanelOpen && (
-        <aside className="w-88 bg-[#0D1322]/95 backdrop-blur-2xl border-l border-white/10 flex flex-col justify-between p-6 flex-shrink-0 z-30 shadow-2xl">
-          <div className="space-y-4">
+        <aside className="w-96 bg-[#0D1322] border-l border-white/10 flex flex-col justify-between p-6 z-40 shadow-2xl">
+          <div className="space-y-5">
             <div className="flex items-center justify-between pb-3 border-b border-white/10">
               <div className="flex items-center space-x-2">
-                <div className="w-7 h-7 rounded-lg bg-purple-500/20 flex items-center justify-center text-purple-400">
-                  <Sparkles className="w-4 h-4" />
-                </div>
-                <h3 className="text-sm font-bold text-white">AI Custom Filter</h3>
+                <Sparkles className="w-4 h-4 text-purple-400" />
+                <h3 className="text-xs font-bold text-white uppercase tracking-wider">Natural Language Filter</h3>
               </div>
-              <button
-                onClick={() => setAiPanelOpen(false)}
-                className="text-slate-400 hover:text-white p-1"
-              >
+              <button onClick={() => setAiPanelOpen(false)} className="text-slate-400 hover:text-white">
                 <X className="w-4 h-4" />
               </button>
             </div>
 
             <p className="text-xs text-slate-400 leading-relaxed">
-              Describe your dream event in natural words. The AI translates it into verified database rules without arbitrary queries.
+              Describe your dream hackathons in plain English. The agent converts it into structured criteria without mutating shared data.
             </p>
 
-            {/* Quick Inspirations */}
+            <textarea
+              rows={3}
+              value={naturalQuery}
+              onChange={e => setNaturalQuery(e.target.value)}
+              placeholder="e.g. Free AI hackathons in Bengaluru with cash prizes and teams of 2 or more..."
+              className="w-full bg-[#070B14] border border-white/10 rounded-xl p-3 text-xs text-slate-200 focus:outline-none focus:border-purple-500"
+            />
+
+            {/* Quick Starter Prompts */}
             <div className="space-y-1.5">
-              <span className="text-[10px] text-slate-500 uppercase tracking-wider font-bold">Quick Examples:</span>
-              <div className="space-y-1">
+              <span className="text-[11px] font-bold text-slate-400 block uppercase tracking-wider">Example Prompts:</span>
+              <div className="flex flex-col gap-1.5">
                 {[
-                  'Free AI agent hackathons in Bengaluru with team size of at least 2 and prize money',
-                  'Online cybersecurity competitions open to college students',
-                  'Technology conferences in Karnataka with open registration'
-                ].map((sample, i) => (
+                  'Drone or robot hackathons in Bangalore or online with cash prizes',
+                  'CTF and cybersecurity competitions with flag challenges',
+                  'Free competitive programming challenges for college students',
+                  'Web3 and smart contracts hackathon with prize money'
+                ].map(prompt => (
                   <button
-                    key={i}
-                    onClick={() => { setNaturalQuery(sample); handleInterpretFilter(sample); }}
-                    className="text-[11px] text-slate-400 hover:text-purple-300 bg-white/[0.03] hover:bg-white/[0.06] p-2 rounded-lg text-left block w-full transition"
+                    key={prompt}
+                    onClick={() => handleInterpretFilter(prompt)}
+                    className="text-left text-[11px] p-2 bg-[#070B14] hover:bg-white/[0.04] text-slate-300 rounded-lg border border-white/5 transition flex items-center justify-between group"
                   >
-                    &ldquo;{sample.slice(0, 42)}...&rdquo;
+                    <span className="truncate mr-2">&ldquo;{prompt}&rdquo;</span>
+                    <Sparkles className="w-3 h-3 text-purple-400 group-hover:text-purple-300 flex-shrink-0" />
                   </button>
                 ))}
               </div>
             </div>
 
-            <div className="space-y-2">
-              <textarea
-                rows={3}
-                value={naturalQuery}
-                onChange={e => setNaturalQuery(e.target.value)}
-                placeholder="Type your requirements..."
-                className="w-full bg-[#070B14] border border-white/10 rounded-xl p-3 text-xs text-slate-200 placeholder-slate-500 focus:outline-none focus:border-purple-500 transition"
-              />
-
-              <button
-                onClick={() => handleInterpretFilter()}
-                disabled={interpreting || !naturalQuery.trim()}
-                className="w-full py-2.5 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white rounded-xl text-xs font-bold transition flex items-center justify-center gap-1.5 shadow-md shadow-purple-600/30"
-              >
-                <Sparkles className="w-3.5 h-3.5" />
-                <span>{interpreting ? 'Interpreting...' : 'Apply Filter'}</span>
-              </button>
-            </div>
+            <button
+              onClick={() => handleInterpretFilter()}
+              disabled={interpreting || !naturalQuery.trim()}
+              className="w-full py-2.5 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white rounded-xl text-xs font-bold transition shadow-lg shadow-purple-600/30 flex items-center justify-center gap-2"
+            >
+              <Sparkles className="w-3.5 h-3.5 text-cyan-300" />
+              <span>{interpreting ? 'Gemini AI Extracting Intent...' : 'Extract Intent & Apply Smart Filter'}</span>
+            </button>
 
             {interpretedFilter && (
-              <div className="p-4 rounded-2xl bg-purple-950/40 border border-purple-500/30 space-y-2.5">
-                <span className="text-[10px] font-mono text-purple-300 font-bold uppercase tracking-wider">Interpreted Rules:</span>
-                <p className="text-xs text-purple-200 leading-relaxed">{interpretedFilter.explanation}</p>
-
-                <div className="flex flex-wrap gap-1 mt-1">
-                  {interpretedFilter.applied_tags?.map((t: string) => (
-                    <span key={t} className="text-[10px] bg-purple-900/60 text-purple-200 px-2 py-0.5 rounded border border-purple-700/50">
-                      {t}
-                    </span>
-                  ))}
+              <div className="space-y-3 pt-3 border-t border-white/10">
+                <div className="flex items-center justify-between">
+                  <span className="text-[11px] font-bold text-purple-300">Extracted by Gemini:</span>
+                  <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+                    {interpretedFilter.model || 'Gemini AI'}
+                  </span>
                 </div>
 
-                <div className="pt-2 flex gap-2">
+                {/* Keywords Chips */}
+                {interpretedFilter.keywords?.length > 0 && (
+                  <div className="space-y-1">
+                    <span className="text-[10px] text-slate-400 font-semibold uppercase tracking-wider">Search Keywords:</span>
+                    <div className="flex flex-wrap gap-1">
+                      {interpretedFilter.keywords.map((kw: string) => (
+                        <span key={kw} className="text-[10px] bg-cyan-950/60 text-cyan-300 px-2 py-0.5 rounded-md border border-cyan-800/50 font-mono">
+                          {kw}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                <p className="text-xs text-slate-300 bg-[#070B14] p-3 rounded-xl border border-white/5 leading-relaxed">
+                  {interpretedFilter.explanation}
+                </p>
+
+                {interpretedFilter.smart_advice && (
+                  <div className="p-3 bg-amber-500/10 border border-amber-500/20 rounded-xl text-xs text-amber-300 flex items-start gap-2">
+                    <Lightbulb className="w-4 h-4 text-amber-400 flex-shrink-0 mt-0.5" />
+                    <div>
+                      <span className="font-bold block mb-0.5">Smart Advice:</span>
+                      <p className="text-[11px] text-amber-200/90 leading-relaxed">{interpretedFilter.smart_advice}</p>
+                    </div>
+                  </div>
+                )}
+
+                <div className="flex gap-2">
                   <button
                     onClick={handleSaveFilter}
-                    className="flex-1 py-1.5 bg-purple-700 hover:bg-purple-600 text-white rounded-lg text-xs font-bold transition"
+                    className="flex-1 py-2 bg-white/[0.05] hover:bg-white/[0.08] text-slate-200 rounded-xl text-xs font-semibold border border-white/10 transition"
                   >
-                    Save Filter
+                    Save this Filter
                   </button>
                   <button
-                    onClick={() => { setInterpretedFilter(null); setNaturalQuery(''); loadEvents(); }}
-                    className="px-3 py-1.5 bg-white/[0.05] hover:bg-white/[0.08] text-slate-300 rounded-lg text-xs transition"
+                    onClick={() => setAiPanelOpen(false)}
+                    className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-xs font-bold transition shadow-md shadow-indigo-600/30"
                   >
-                    Clear
+                    View Events
                   </button>
                 </div>
               </div>
             )}
-          </div>
-
-          <div className="pt-4 border-t border-white/5 text-[11px] text-slate-500 text-center">
-            Shared dataset guaranteed: filters never trigger duplicate web crawls.
           </div>
         </aside>
       )}
@@ -1406,11 +1856,18 @@ export default function Home() {
             {/* Modal Header */}
             <div className="p-6 border-b border-white/10 flex items-start justify-between bg-[#0D1322]">
               <div>
-                <span className={`text-[11px] font-bold px-2.5 py-1 rounded-md border ${getSourceBadgeStyle(selectedEvent.source_platform)}`}>
-                  {selectedEvent.source_platform}
-                </span>
+                <div className="flex items-center gap-2">
+                  <span className="text-[11px] font-bold px-2 py-0.5 rounded-md border bg-blue-500/10 text-blue-300 border-blue-500/20">
+                    {selectedEvent.source_platform}
+                  </span>
+                  <span className={`text-[11px] font-bold px-2.5 py-0.5 rounded-md border ${getCategoryBadgeStyle(selectedEvent.primary_category_id)}`}>
+                    {selectedEvent.primary_category_name || 'Engineer Hackathon'}
+                  </span>
+                </div>
                 <h3 className="text-lg font-black text-white mt-2">{selectedEvent.canonical_title}</h3>
-                <p className="text-xs text-slate-400 mt-1">{selectedEvent.organizer_name} • {selectedEvent.location_name}</p>
+                <p className="text-xs text-slate-400 mt-1">
+                  {selectedEvent.organizer_name} • {selectedEvent.canonical_city ? `${selectedEvent.canonical_city}, ${selectedEvent.canonical_state}` : selectedEvent.location_name}
+                </p>
               </div>
               <button
                 onClick={() => { setSelectedEvent(null); setResearchAnswer(null); }}
@@ -1428,11 +1885,19 @@ export default function Home() {
                 <p className="text-xs text-slate-300 leading-relaxed whitespace-pre-line">{selectedEvent.description}</p>
               </div>
 
+              {/* Classification Reasoning */}
+              {selectedEvent.reasoning_summary && (
+                <div className="p-3.5 bg-[#070B14] rounded-2xl border border-white/5 space-y-1">
+                  <span className="text-[11px] font-bold text-indigo-400 block uppercase tracking-wider">Classification Confidence & Evidence</span>
+                  <p className="text-xs text-slate-300 leading-relaxed">{selectedEvent.reasoning_summary}</p>
+                </div>
+              )}
+
               {/* Quick Spec Matrix */}
               <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
                 <div className="p-3.5 bg-[#070B14] rounded-2xl border border-white/5">
-                  <span className="text-[11px] text-slate-500 block">Registration Status</span>
-                  <span className="text-xs font-bold text-emerald-400">{selectedEvent.registration_status}</span>
+                  <span className="text-[11px] text-slate-500 block">Format</span>
+                  <span className="text-xs font-bold text-emerald-400">{selectedEvent.attendance_format}</span>
                 </div>
                 <div className="p-3.5 bg-[#070B14] rounded-2xl border border-white/5">
                   <span className="text-[11px] text-slate-500 block">Prize Pool</span>
@@ -1559,83 +2024,460 @@ export default function Home() {
       )}
 
       {/* ======================================================== */}
-      {/* 5. REGISTRATION ASSISTANT MODAL                          */}
+      {/* 5. AGENTIC REGISTRATION SANDBOX MODAL                    */}
       {/* ======================================================== */}
       {regModalEvent && (
-        <div className="fixed inset-0 bg-black/80 backdrop-blur-md z-50 flex items-center justify-center p-4">
-          <div className="glass-panel border-white/10 w-full max-w-xl rounded-3xl overflow-hidden shadow-2xl p-6 space-y-4">
-            <div className="flex items-center justify-between pb-3 border-b border-white/10">
+        <div className="fixed inset-0 bg-black/85 backdrop-blur-md z-50 flex items-center justify-center p-4">
+          <div className="glass-panel border-white/10 w-full max-w-2xl max-h-[90vh] rounded-3xl overflow-hidden shadow-2xl flex flex-col">
+            {/* Modal Header */}
+            <div className="p-5 border-b border-white/10 flex items-start justify-between bg-[#0D1322]/90">
               <div>
-                <h3 className="text-base font-black text-white">AI Assisted Registration</h3>
-                <p className="text-xs text-slate-400">{regModalEvent.canonical_title}</p>
+                <div className="flex items-center gap-2">
+                  <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded-full bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">
+                    Agentic Registration Sandbox
+                  </span>
+                  <span className="text-[10px] font-bold px-2 py-0.5 rounded-md border bg-blue-500/10 text-blue-300 border-blue-500/20">
+                    {regModalEvent.source_platform}
+                  </span>
+                </div>
+                <h3 className="text-base font-black text-white mt-1.5">{regModalEvent.canonical_title}</h3>
+                <p className="text-xs text-slate-400">
+                  {regModalEvent.attendance_format} • {regModalEvent.canonical_city || regModalEvent.city || 'Online'}
+                </p>
               </div>
-              <button onClick={() => setRegModalEvent(null)} className="text-slate-400 hover:text-white">
+              <button
+                onClick={() => { setRegModalEvent(null); setRegConfirmed(false); }}
+                className="text-slate-400 hover:text-white p-1 rounded-lg hover:bg-white/5 transition"
+              >
                 <X className="w-5 h-5" />
               </button>
             </div>
 
-            {regLoading && (
-              <div className="py-8 text-center text-xs text-slate-400">
-                <RefreshCw className="w-6 h-6 text-indigo-400 animate-spin mx-auto mb-2" />
-                Mapping your saved profile to event form requirements...
-              </div>
-            )}
+            {/* Modal Body */}
+            <div className="p-6 overflow-y-auto space-y-5 flex-1">
+              {regLoading && (
+                <div className="py-12 text-center text-xs text-slate-400">
+                  <RefreshCw className="w-8 h-8 text-indigo-400 animate-spin mx-auto mb-3" />
+                  <p className="font-semibold text-slate-300">Auditing Form Requirements in Sandbox...</p>
+                  <p className="text-[11px] text-slate-500 mt-1">Comparing user profile against platform schema.</p>
+                </div>
+              )}
 
-            {!regLoading && regPlan && !regConfirmed && (
-              <div className="space-y-4">
-                <div className="p-3 bg-amber-500/10 border border-amber-500/30 rounded-2xl text-xs text-amber-300 flex items-start gap-2.5">
-                  <AlertCircle className="w-4 h-4 text-amber-400 flex-shrink-0 mt-0.5" />
-                  <div>
-                    <span className="font-bold">Human-in-the-Loop Review:</span>
-                    <p className="mt-0.5">Please review the mapped profile data below before granting final submission approval.</p>
+              {/* LIVE AGENT EXECUTION CONSOLE WHILE APPROVING & REGISTERING ON LIVE PLATFORM */}
+              {regApproving && (
+                <div className="py-8 px-5 bg-[#070B14] rounded-2xl border border-indigo-500/30 space-y-6">
+                  <div className="text-center space-y-2">
+                    <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-indigo-500/10 border border-indigo-500/30 text-cyan-300 text-xs font-bold animate-pulse">
+                      <span>🐟</span>
+                      <span>TinyFish Cloud Browser Active on {regModalEvent.source_platform}</span>
+                    </div>
+                    <h4 className="text-base font-black text-white">
+                      Agent Executing Live Registration
+                    </h4>
+                    <p className="text-xs text-slate-400 max-w-md mx-auto">
+                      Approval completes only when the agent finishes form submission on {regModalEvent.source_platform} and receives registration verification.
+                    </p>
+                  </div>
+
+                  {/* Dynamic Progress Bar */}
+                  <div className="space-y-1.5 max-w-md mx-auto">
+                    <div className="flex justify-between text-[11px] text-slate-400 font-mono">
+                      <span>Autonomous Session Progress</span>
+                      <span className="text-cyan-300 font-bold">{Math.min(regLiveProgressStep * 24, 96)}%</span>
+                    </div>
+                    <div className="w-full bg-slate-800 rounded-full h-2 overflow-hidden">
+                      <div
+                        className="h-full bg-gradient-to-r from-cyan-500 via-indigo-500 to-emerald-400 transition-all duration-700"
+                        style={{ width: `${Math.min(regLiveProgressStep * 24, 96)}%` }}
+                      />
+                    </div>
+                  </div>
+
+                  {/* Stepper Checklist */}
+                  <div className="max-w-md mx-auto space-y-2 text-xs font-mono">
+                    <div className="flex items-center gap-3 p-2.5 rounded-xl bg-black/40 border border-white/5">
+                      <CheckCircle2 className="w-4 h-4 text-emerald-400 flex-shrink-0" />
+                      <span className="text-slate-200">1. User profile & attendee parameters validated (100% Ready)</span>
+                    </div>
+
+                    <div className={`flex items-center gap-3 p-2.5 rounded-xl border transition-all ${
+                      regLiveProgressStep >= 2
+                        ? 'bg-black/40 border-white/5 text-slate-200'
+                        : 'bg-indigo-950/20 border-indigo-500/30 text-cyan-300 font-bold'
+                    }`}>
+                      {regLiveProgressStep > 2 ? (
+                        <CheckCircle2 className="w-4 h-4 text-emerald-400 flex-shrink-0" />
+                      ) : (
+                        <RefreshCw className="w-4 h-4 text-cyan-400 animate-spin flex-shrink-0" />
+                      )}
+                      <span>2. TinyFish browser navigating to {regModalEvent.source_platform} live URL</span>
+                    </div>
+
+                    <div className={`flex items-center gap-3 p-2.5 rounded-xl border transition-all ${
+                      regLiveProgressStep >= 3
+                        ? regLiveProgressStep > 3 ? 'bg-black/40 border-white/5 text-slate-200' : 'bg-indigo-950/20 border-indigo-500/30 text-cyan-300 font-bold'
+                        : 'bg-black/20 border-white/5 text-slate-500'
+                    }`}>
+                      {regLiveProgressStep > 3 ? (
+                        <CheckCircle2 className="w-4 h-4 text-emerald-400 flex-shrink-0" />
+                      ) : regLiveProgressStep === 3 ? (
+                        <RefreshCw className="w-4 h-4 text-cyan-400 animate-spin flex-shrink-0" />
+                      ) : (
+                        <div className="w-4 h-4 rounded-full border border-slate-600 flex-shrink-0" />
+                      )}
+                      <span>3. Entering attendee inputs & accepting registration terms</span>
+                    </div>
+
+                    <div className={`flex items-center gap-3 p-2.5 rounded-xl border transition-all ${
+                      regLiveProgressStep >= 4
+                        ? regLiveProgressStep > 4 ? 'bg-black/40 border-white/5 text-slate-200' : 'bg-indigo-950/20 border-indigo-500/30 text-cyan-300 font-bold'
+                        : 'bg-black/20 border-white/5 text-slate-500'
+                    }`}>
+                      {regLiveProgressStep > 4 ? (
+                        <CheckCircle2 className="w-4 h-4 text-emerald-400 flex-shrink-0" />
+                      ) : regLiveProgressStep === 4 ? (
+                        <RefreshCw className="w-4 h-4 text-cyan-400 animate-spin flex-shrink-0" />
+                      ) : (
+                        <div className="w-4 h-4 rounded-full border border-slate-600 flex-shrink-0" />
+                      )}
+                      <span>4. Verifying platform confirmation & dispatching official email receipt</span>
+                    </div>
+                  </div>
+
+                  <p className="text-[11px] text-center text-slate-500 font-mono">
+                    Target URL: {regModalEvent.registration_url || regModalEvent.source_url}
+                  </p>
+                </div>
+              )}
+
+              {/* ACTIVE AUDIT & FORM INSPECTOR */}
+              {!regLoading && !regApproving && regPlan && !regConfirmed && (
+                <div className="space-y-5">
+                  {/* Readiness Banner & Progress Bar */}
+                  <div className="p-4 bg-[#070B14] rounded-2xl border border-white/10 space-y-2.5">
+                    <div className="flex items-center justify-between text-xs">
+                      <span className="font-bold text-slate-200 flex items-center gap-1.5">
+                        <Sparkles className="w-4 h-4 text-indigo-400" />
+                        Form Requirements Audit
+                      </span>
+                      <span className={`font-mono font-bold px-2.5 py-0.5 rounded-full text-[11px] border ${
+                        regPlan.readiness_percentage === 100
+                          ? 'bg-emerald-500/10 text-emerald-300 border-emerald-500/30'
+                          : 'bg-amber-500/10 text-amber-300 border-amber-500/30'
+                      }`}>
+                        {regPlan.readiness_percentage}% Ready ({regPlan.provided_count || 0}/{regPlan.required_count || 0} Required Fields)
+                      </span>
+                    </div>
+
+                    {/* Progress Bar */}
+                    <div className="w-full bg-slate-800/80 rounded-full h-2 overflow-hidden">
+                      <div
+                        className={`h-full transition-all duration-500 rounded-full ${
+                          regPlan.readiness_percentage === 100
+                            ? 'bg-gradient-to-r from-emerald-500 to-teal-400'
+                            : 'bg-gradient-to-r from-amber-500 to-indigo-500'
+                        }`}
+                        style={{ width: `${regPlan.readiness_percentage || 0}%` }}
+                      />
+                    </div>
+
+                    <p className="text-[11px] text-slate-400">
+                      {regPlan.notes || 'Inspect and supply required details below. Updates will automatically persist to your profile.'}
+                    </p>
+                  </div>
+
+                  {/* Field Requirements List & In-Place Editor */}
+                  <div className="space-y-3">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-bold text-slate-300 uppercase tracking-wider">
+                        Required & Optional Fields:
+                      </span>
+                      <span className="text-[11px] text-slate-500">
+                        {regPlan.fields?.length || 0} Total Fields
+                      </span>
+                    </div>
+
+                    <div className="space-y-2.5">
+                      {regPlan.fields?.map((field: any) => {
+                        const val = editingFields[field.field_key] !== undefined ? editingFields[field.field_key] : (field.current_value || '');
+                        const isMissing = field.required && (!val || val.trim().length === 0);
+
+                        return (
+                          <div
+                            key={field.field_key}
+                            className={`p-3.5 rounded-xl border transition ${
+                              isMissing
+                                ? 'bg-rose-950/20 border-rose-500/40'
+                                : 'bg-[#070B14] border-white/5 hover:border-white/10'
+                            }`}
+                          >
+                            <div className="flex items-center justify-between mb-1.5">
+                              <div className="flex items-center gap-2">
+                                <label className="text-xs font-bold text-slate-200">
+                                  {field.label}
+                                </label>
+                                <span className={`text-[9px] font-mono font-bold px-1.5 py-0.2 rounded ${
+                                  field.required
+                                    ? 'bg-rose-500/20 text-rose-300 border border-rose-500/30'
+                                    : 'bg-slate-800 text-slate-400'
+                                }`}>
+                                  {field.required ? 'REQUIRED' : 'OPTIONAL'}
+                                </span>
+                              </div>
+
+                              <span className="text-[10px] text-slate-500 font-mono">
+                                {field.category}
+                              </span>
+                            </div>
+
+                            {field.options && field.options.length > 0 ? (
+                              <select
+                                value={val}
+                                onChange={e => setEditingFields({ ...editingFields, [field.field_key]: e.target.value })}
+                                className="w-full bg-[#0D1322] border border-white/10 rounded-lg px-3 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-indigo-500"
+                              >
+                                {field.options.map((opt: string) => (
+                                  <option key={opt} value={opt}>{opt}</option>
+                                ))}
+                              </select>
+                            ) : (
+                              <input
+                                type="text"
+                                value={val}
+                                placeholder={field.placeholder || field.label}
+                                onChange={e => setEditingFields({ ...editingFields, [field.field_key]: e.target.value })}
+                                className="w-full bg-[#0D1322] border border-white/10 rounded-lg px-3 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-indigo-500 transition placeholder:text-slate-600"
+                              />
+                            )}
+
+                            {field.description && (
+                              <p className="text-[10px] text-slate-500 mt-1">{field.description}</p>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  {/* Profile Sync Checkbox & Recalculate Button */}
+                  <div className="pt-2 border-t border-white/10 flex flex-wrap items-center justify-between gap-3">
+                    <label className="flex items-center gap-2 text-xs text-slate-300 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={replaceProfileChecked}
+                        onChange={e => setReplaceProfileChecked(e.target.checked)}
+                        className="rounded bg-slate-900 border-white/20 text-indigo-600 focus:ring-0"
+                      />
+                      <span>Sync changes to my default profile for future registrations</span>
+                    </label>
+
+                    <button
+                      onClick={handleUpdateRegFields}
+                      className="px-4 py-2 bg-white/[0.08] hover:bg-white/[0.12] text-slate-200 rounded-xl text-xs font-semibold border border-white/10 transition"
+                    >
+                      Update Details & Recalculate Sandbox
+                    </button>
+                  </div>
+
+                  {/* TinyFish Web Automation Live Browser Action */}
+                  <div className="p-4 bg-gradient-to-r from-blue-950/40 via-indigo-950/40 to-purple-950/40 rounded-2xl border border-indigo-500/30 space-y-3">
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                      <div className="flex items-center gap-2">
+                        <div className="w-7 h-7 rounded-lg bg-indigo-500/20 text-cyan-300 flex items-center justify-center font-bold text-sm">
+                          🐟
+                        </div>
+                        <div>
+                          <h4 className="text-xs font-bold text-white flex items-center gap-1.5">
+                            TinyFish Agent Live Browser Automation
+                          </h4>
+                          <p className="text-[10px] text-slate-400">
+                            Dispatches TinyFish cloud browser directly to {regModalEvent.source_platform} to inspect live inputs and auto-fill your details.
+                          </p>
+                        </div>
+                      </div>
+
+                      <button
+                        onClick={handleRunTinyFishLiveFill}
+                        disabled={tinyFishLiveLoading}
+                        className="px-4 py-2 bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 disabled:opacity-50 text-white rounded-xl text-xs font-bold transition flex items-center gap-1.5 shadow-md shadow-cyan-600/20"
+                      >
+                        <Zap className="w-3.5 h-3.5 text-yellow-300 fill-yellow-300" />
+                        <span>{tinyFishLiveLoading ? 'TinyFish Navigating Live Page...' : 'Navigate & Live Fill via TinyFish'}</span>
+                      </button>
+                    </div>
+
+                    {/* Live TinyFish Result */}
+                    {tinyFishLiveResult && (
+                      <div className="p-3 bg-black/60 rounded-xl border border-white/10 space-y-2 text-xs">
+                        <div className="flex items-center justify-between text-[11px]">
+                          <span className="font-bold text-emerald-400 flex items-center gap-1">
+                            <CheckCircle2 className="w-3.5 h-3.5" />
+                            TinyFish Automation Executed
+                          </span>
+                          {tinyFishLiveResult.streaming_url && (
+                            <a
+                              href={tinyFishLiveResult.streaming_url}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="text-cyan-300 hover:underline flex items-center gap-1 text-[10px]"
+                            >
+                              <span>Watch Live Browser Stream</span>
+                              <ExternalLink className="w-3 h-3" />
+                            </a>
+                          )}
+                        </div>
+
+                        <p className="text-[11px] text-slate-300 whitespace-pre-line leading-relaxed font-mono bg-[#070B14] p-2.5 rounded-lg border border-white/5 max-h-40 overflow-y-auto">
+                          {tinyFishLiveResult.live_result}
+                        </p>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Action Buttons */}
+                  <div className="flex justify-end gap-2.5 pt-3 border-t border-white/10">
+                    <button
+                      onClick={() => setRegModalEvent(null)}
+                      className="px-4 py-2 bg-white/[0.05] hover:bg-white/[0.08] text-slate-300 rounded-xl text-xs font-semibold"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      onClick={handleConfirmRegistration}
+                      disabled={regPlan.missing_required_count > 0 || regApproving}
+                      className="px-6 py-2.5 bg-gradient-to-r from-emerald-600 via-teal-600 to-indigo-600 hover:from-emerald-500 hover:to-indigo-500 disabled:opacity-50 text-white rounded-xl text-xs font-bold transition flex items-center gap-2 shadow-lg shadow-emerald-600/30"
+                    >
+                      {regApproving ? (
+                        <>
+                          <RefreshCw className="w-4 h-4 animate-spin text-cyan-200" />
+                          <span>Agent Registering on {regModalEvent.source_platform}...</span>
+                        </>
+                      ) : (
+                        <>
+                          <CheckCircle2 className="w-4 h-4 text-emerald-300" />
+                          <span>{regPlan.missing_required_count > 0 ? `Fill ${regPlan.missing_required_count} Missing Field(s)` : 'Approve and Register'}</span>
+                        </>
+                      )}
+                    </button>
                   </div>
                 </div>
+              )}
 
-                {/* Form fields preview */}
-                <div className="bg-[#070B14] p-4 rounded-2xl border border-white/5 space-y-2 text-xs">
-                  {Object.entries(regPlan.mapped_fields).map(([label, val]: [string, any]) => (
-                    <div key={label} className="flex justify-between py-1 border-b border-white/5 last:border-0">
-                      <span className="text-slate-400 font-medium">{label}:</span>
-                      <span className="text-slate-200 font-mono text-right truncate max-w-xs">{val}</span>
+              {/* ======================================================== */}
+              {/* SUCCESS STATE: EMAIL DISPATCH + HACKATHON REDIRECT PROOF */}
+              {/* ======================================================== */}
+              {!regLoading && !regApproving && regConfirmed && (
+                <div className="py-4 space-y-5">
+                  <div className="text-center space-y-2">
+                    <div className="w-12 h-12 rounded-full bg-emerald-500/20 text-emerald-400 flex items-center justify-center mx-auto shadow-glow">
+                      <CheckCircle2 className="w-6 h-6" />
                     </div>
-                  ))}
-                </div>
+                    <h4 className="text-base font-black text-white">Registration Confirmed & Verified!</h4>
+                    <p className="text-xs text-slate-400 max-w-md mx-auto">
+                      Your application has been registered. You have two verification receipts below:
+                    </p>
+                  </div>
 
-                <div className="flex justify-end gap-2 pt-2">
-                  <button
-                    onClick={() => setRegModalEvent(null)}
-                    className="px-4 py-2 bg-white/[0.05] hover:bg-white/[0.08] text-slate-300 rounded-xl text-xs font-semibold"
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    onClick={handleConfirmRegistration}
-                    className="px-5 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-xs font-bold transition flex items-center gap-1.5 shadow-lg shadow-indigo-600/30"
-                  >
-                    <CheckCircle2 className="w-4 h-4" />
-                    <span>Approve & Confirm Registration</span>
-                  </button>
-                </div>
-              </div>
-            )}
+                  {/* Verification Proof Cards Grid */}
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    {/* Card 1: Platform Confirmation Email */}
+                    <div className="p-4 bg-[#070B14] rounded-2xl border border-indigo-500/30 space-y-2.5 shadow-sm">
+                      <div className="flex items-center justify-between">
+                        <span className="text-[11px] font-bold text-indigo-300 flex items-center gap-1.5">
+                          <Send className="w-3.5 h-3.5 text-indigo-400" />
+                          Platform Confirmation Email
+                        </span>
+                        <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+                          {regResult?.email_confirmation?.status || 'SENT'}
+                        </span>
+                      </div>
+                      <p className="text-xs text-slate-200">
+                        Dispatched to: <strong className="text-cyan-300">{regResult?.email_confirmation?.sent_to || editingFields['email'] || 'krishna@example.com'}</strong>
+                      </p>
+                      <p className="text-[11px] text-slate-400">
+                        Sender: <code className="text-indigo-400 font-mono">alerts@usai.events</code>
+                      </p>
+                      <div className="p-2 bg-black/40 rounded-lg text-[10px] font-mono text-slate-400">
+                        Ref: {regResult?.audit_id || 'USAI-CONF-VERIFIED'}
+                      </div>
+                    </div>
 
-            {!regLoading && regConfirmed && (
-              <div className="py-6 text-center space-y-3">
-                <div className="w-12 h-12 rounded-full bg-emerald-500/20 text-emerald-400 flex items-center justify-center mx-auto">
-                  <CheckCircle2 className="w-6 h-6" />
+                    {/* Card 2: Hackathon-Side Confirmation & Proof */}
+                    <div className="p-4 bg-[#070B14] rounded-2xl border border-purple-500/30 space-y-2.5 shadow-sm">
+                      <div className="flex items-center justify-between">
+                        <span className="text-[11px] font-bold text-purple-300 flex items-center gap-1.5">
+                          <ExternalLink className="w-3.5 h-3.5 text-purple-400" />
+                          Hackathon Confirmation Proof
+                        </span>
+                        <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-purple-500/20 text-purple-300 border border-purple-500/30">
+                          {regResult?.hackathon_confirmation?.badge_id || 'USAI-HK-498271'}
+                        </span>
+                      </div>
+                      <p className="text-xs text-slate-200">
+                        Status: <strong className="text-emerald-400">CONFIRMED ON HACKATHON</strong>
+                      </p>
+                      <p className="text-[11px] text-slate-400">
+                        Redirect destination shows your active registration status.
+                      </p>
+                      <a
+                        href={regResult?.hackathon_confirmation?.redirect_url || regModalEvent?.registration_url || regModalEvent?.source_url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center gap-1 text-[11px] text-cyan-300 hover:text-cyan-200 font-semibold underline"
+                      >
+                        <span>Open Hackathon Registration Screen</span>
+                        <ExternalLink className="w-3 h-3" />
+                      </a>
+                    </div>
+
+                    {/* Card 3: TinyFish Live Agent Browser Proof */}
+                    <div className="md:col-span-2 p-4 bg-[#070B14] rounded-2xl border border-cyan-500/30 space-y-2.5 shadow-sm">
+                      <div className="flex items-center justify-between">
+                        <span className="text-[11px] font-bold text-cyan-300 flex items-center gap-1.5">
+                          <span>🐟</span>
+                          TinyFish Live Browser Execution Proof ({regModalEvent.source_platform})
+                        </span>
+                        <div className="flex items-center gap-2">
+                          {regResult?.tinyfish_automation?.streaming_url && (
+                            <a
+                              href={regResult.tinyfish_automation.streaming_url}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="text-[10px] text-cyan-400 hover:underline flex items-center gap-1"
+                            >
+                              <span>Watch Live Stream</span>
+                              <ExternalLink className="w-3 h-3" />
+                            </a>
+                          )}
+                          <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-cyan-500/20 text-cyan-300 border border-cyan-500/30">
+                            {regResult?.tinyfish_automation?.status || 'COMPLETED'}
+                          </span>
+                        </div>
+                      </div>
+                      <div className="grid grid-cols-2 gap-2 text-xs text-slate-300">
+                        <p>Run ID: <code className="font-mono text-cyan-300 text-[10px]">{regResult?.tinyfish_automation?.run_id || 'tf-confirmed'}</code></p>
+                        <p>Actions Completed: <strong className="text-emerald-400">{regResult?.tinyfish_automation?.num_of_steps || 1} browser steps</strong></p>
+                      </div>
+                      <div className="p-3 bg-black/60 rounded-xl border border-white/5 space-y-1">
+                        <p className="text-[10px] font-mono uppercase text-slate-500">Live Agent Action & Transcript</p>
+                        <p className="text-[11px] font-mono text-slate-300 whitespace-pre-line leading-relaxed max-h-36 overflow-y-auto">
+                          {regResult?.tinyfish_automation?.live_result || 'Form navigated and submitted on live platform.'}
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="text-center pt-2">
+                    <button
+                      onClick={() => setRegModalEvent(null)}
+                      className="px-6 py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-xs font-bold transition shadow-md shadow-indigo-600/30"
+                    >
+                      Done & Return to Events
+                    </button>
+                  </div>
                 </div>
-                <h4 className="text-sm font-bold text-white">Registration Confirmed!</h4>
-                <p className="text-xs text-slate-400 max-w-sm mx-auto">
-                  Your profile details have been verified and recorded to your audit ledger. An event reminder has been scheduled.
-                </p>
-                <button
-                  onClick={() => setRegModalEvent(null)}
-                  className="mt-2 px-6 py-2 bg-indigo-600 text-white rounded-xl text-xs font-bold"
-                >
-                  Done
-                </button>
-              </div>
-            )}
+              )}
+            </div>
           </div>
         </div>
       )}

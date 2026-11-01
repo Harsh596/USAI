@@ -1,6 +1,35 @@
+# Dependencies
 node_modules/
+*/node_modules/
+
+# OS files
 .DS_Store
+Thumbs.db
+
+# Databases & local data
 *.db
+*.db-journal
+*.db-wal
+*.db-shm
 backend/data/
+
+# Builds & exports
+dist/
+backend/exports/
 frontend/.next/
 frontend/out/
+
+# Environment files - hide all .env files (.env, .env.example, .env.local, etc.)
+.env*
+*.env*
+backend/.env*
+frontend/.env*
+
+# MCP Configuration - hide all MCP config
+mcp_config.json
+*mcp*config*.json
+.mcp*
+
+# Ensure documentation is always shown
+!README.md
+!ReadMe.md

@@ -87,41 +87,55 @@ export class TinyFishService {
   }
 
   /**
-   * Fetch contents of one or more URLs
+   * Fetch contents of one or more URLs (automatically chunked into <=10 batches for TinyFish API)
    */
   async fetchContent(urls: string[]): Promise<TinyFishFetchResponse> {
     if (!this.apiKey) {
       return { results: [], errors: [{ url: urls[0] || '', error: 'API key missing' }] };
     }
 
-    try {
-      const response = await fetch(this.fetchApiUrl, {
-        method: 'POST',
-        headers: {
-          'X-API-Key': this.apiKey,
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({ urls })
-      });
-
-      if (!response.ok) {
-        const errText = await response.text();
-        console.error(`[TinyFishService] Fetch HTTP error ${response.status}: ${errText}`);
-        return {
-          results: [],
-          errors: urls.map(u => ({ url: u, error: `HTTP ${response.status}: ${errText}` }))
-        };
-      }
-
-      const data = (await response.json()) as TinyFishFetchResponse;
-      return data;
-    } catch (err: any) {
-      console.error('[TinyFishService] Fetch error:', err.message);
-      return {
-        results: [],
-        errors: urls.map(u => ({ url: u, error: err.message }))
-      };
+    if (!urls || urls.length === 0) {
+      return { results: [], errors: [] };
     }
+
+    // TinyFish batch fetch allows max 10 URLs per call
+    const CHUNK_SIZE = 10;
+    const allResults: TinyFishFetchItem[] = [];
+    const allErrors: Array<{ url: string; error: string }> = [];
+
+    for (let i = 0; i < urls.length; i += CHUNK_SIZE) {
+      const chunk = urls.slice(i, i + CHUNK_SIZE);
+      try {
+        const response = await fetch(this.fetchApiUrl, {
+          method: 'POST',
+          headers: {
+            'X-API-Key': this.apiKey,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({ urls: chunk })
+        });
+
+        if (!response.ok) {
+          const errText = await response.text();
+          console.error(`[TinyFishService] Fetch HTTP error ${response.status}: ${errText}`);
+          for (const u of chunk) {
+            allErrors.push({ url: u, error: `HTTP ${response.status}: ${errText}` });
+          }
+          continue;
+        }
+
+        const data = (await response.json()) as TinyFishFetchResponse;
+        if (data.results) allResults.push(...data.results);
+        if (data.errors) allErrors.push(...data.errors);
+      } catch (err: any) {
+        console.error('[TinyFishService] Fetch error:', err.message);
+        for (const u of chunk) {
+          allErrors.push({ url: u, error: err.message });
+        }
+      }
+    }
+
+    return { results: allResults, errors: allErrors };
   }
 
   /**

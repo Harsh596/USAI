@@ -16,6 +16,42 @@ db.pragma('foreign_keys = ON');
 
 export function initDatabase() {
   db.exec(`
+    -- Canonical Locations: Countries
+    CREATE TABLE IF NOT EXISTS countries (
+      country_id TEXT PRIMARY KEY,
+      name TEXT NOT NULL UNIQUE,
+      code TEXT NOT NULL UNIQUE,
+      created_at TEXT NOT NULL
+    );
+
+    -- Canonical Locations: States / Provinces
+    CREATE TABLE IF NOT EXISTS states (
+      state_id TEXT PRIMARY KEY,
+      country_id TEXT NOT NULL,
+      name TEXT NOT NULL,
+      code TEXT,
+      created_at TEXT NOT NULL,
+      FOREIGN KEY (country_id) REFERENCES countries(country_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_states_country ON states (country_id);
+
+    -- Canonical Locations: Cities
+    CREATE TABLE IF NOT EXISTS cities (
+      city_id TEXT PRIMARY KEY,
+      state_id TEXT NOT NULL,
+      country_id TEXT NOT NULL,
+      name TEXT NOT NULL,
+      canonical_name TEXT NOT NULL,
+      aliases TEXT, -- JSON array of strings
+      latitude REAL,
+      longitude REAL,
+      created_at TEXT NOT NULL,
+      FOREIGN KEY (state_id) REFERENCES states(state_id),
+      FOREIGN KEY (country_id) REFERENCES countries(country_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_cities_state ON cities (state_id);
+    CREATE INDEX IF NOT EXISTS idx_cities_name ON cities (name);
+
     -- Shared Canonical Events Table
     CREATE TABLE IF NOT EXISTS events (
       event_id TEXT PRIMARY KEY,
@@ -37,6 +73,8 @@ export function initDatabase() {
       registration_open_datetime TEXT,
       registration_deadline TEXT,
       location_name TEXT,
+      city_id TEXT,
+      state_id TEXT,
       city TEXT,
       state TEXT,
       country TEXT DEFAULT 'India',
@@ -68,7 +106,9 @@ export function initDatabase() {
       extraction_confidence REAL DEFAULT 1.0,
       field_verification_status TEXT, -- JSON object
       created_at TEXT NOT NULL,
-      updated_at TEXT NOT NULL
+      updated_at TEXT NOT NULL,
+      FOREIGN KEY (city_id) REFERENCES cities(city_id),
+      FOREIGN KEY (state_id) REFERENCES states(state_id)
     );
 
     CREATE INDEX IF NOT EXISTS idx_events_city ON events (city);
@@ -76,6 +116,95 @@ export function initDatabase() {
     CREATE INDEX IF NOT EXISTS idx_events_deadline ON events (registration_deadline);
     CREATE INDEX IF NOT EXISTS idx_events_start ON events (start_datetime);
     CREATE INDEX IF NOT EXISTS idx_events_platform ON events (source_platform);
+
+    -- Taxonomy: Dynamic Event Categories
+    CREATE TABLE IF NOT EXISTS categories (
+      category_id TEXT PRIMARY KEY,
+      name TEXT NOT NULL UNIQUE,
+      slug TEXT NOT NULL UNIQUE,
+      parent_category_id TEXT,
+      description TEXT,
+      keywords TEXT, -- JSON array of key phrases
+      signals TEXT,  -- JSON definition of signal weights
+      display_order INTEGER DEFAULT 0,
+      is_active INTEGER DEFAULT 1,
+      created_at TEXT NOT NULL,
+      FOREIGN KEY (parent_category_id) REFERENCES categories(category_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_cat_parent ON categories (parent_category_id);
+    CREATE INDEX IF NOT EXISTS idx_cat_slug ON categories (slug);
+
+    -- Category Synonyms and Aliases
+    CREATE TABLE IF NOT EXISTS category_aliases (
+      id TEXT PRIMARY KEY,
+      alias TEXT NOT NULL UNIQUE,
+      category_id TEXT NOT NULL,
+      confidence REAL DEFAULT 1.0,
+      FOREIGN KEY (category_id) REFERENCES categories(category_id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_alias_text ON category_aliases (alias);
+
+    -- Event Multi-Label Classifications & Evidence
+    CREATE TABLE IF NOT EXISTS event_classifications (
+      id TEXT PRIMARY KEY,
+      event_id TEXT NOT NULL UNIQUE,
+      primary_category_id TEXT NOT NULL,
+      secondary_category_ids TEXT, -- JSON array of category_ids
+      confidence REAL NOT NULL,
+      signals TEXT,                -- JSON array of matched signals/evidence
+      reasoning_summary TEXT,
+      classification_status TEXT NOT NULL, -- 'CLASSIFIED' | 'NEEDS_REVIEW' | 'UNCLASSIFIED'
+      classified_at TEXT NOT NULL,
+      model_or_rule TEXT NOT NULL,
+      FOREIGN KEY (event_id) REFERENCES events(event_id) ON DELETE CASCADE,
+      FOREIGN KEY (primary_category_id) REFERENCES categories(category_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_event_class_primary ON event_classifications (primary_category_id);
+    CREATE INDEX IF NOT EXISTS idx_event_class_status ON event_classifications (classification_status);
+
+    -- Tracked User Search Queries for Intent & Gap Detection
+    CREATE TABLE IF NOT EXISTS category_search_queries (
+      id TEXT PRIMARY KEY,
+      query_text TEXT NOT NULL,
+      normalized_query TEXT NOT NULL,
+      resolved_category_id TEXT,
+      is_mapped INTEGER DEFAULT 0,
+      search_count INTEGER DEFAULT 1,
+      first_searched_at TEXT NOT NULL,
+      last_searched_at TEXT NOT NULL,
+      FOREIGN KEY (resolved_category_id) REFERENCES categories(category_id) ON DELETE SET NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_search_query_norm ON category_search_queries (normalized_query);
+
+    -- Category Proposals for Review & Discovery
+    CREATE TABLE IF NOT EXISTS category_proposals (
+      proposal_id TEXT PRIMARY KEY,
+      suggested_name TEXT NOT NULL UNIQUE,
+      suggested_slug TEXT NOT NULL UNIQUE,
+      description TEXT,
+      parent_candidate_id TEXT,
+      source_queries TEXT, -- JSON array
+      sample_event_ids TEXT, -- JSON array
+      search_frequency INTEGER DEFAULT 1,
+      event_matches_count INTEGER DEFAULT 0,
+      status TEXT DEFAULT 'NEEDS_REVIEW', -- 'NEEDS_REVIEW' | 'APPROVED' | 'MERGED' | 'REJECTED'
+      reviewed_by TEXT,
+      reviewed_at TEXT,
+      review_notes TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+
+    -- Category Review & Migration History
+    CREATE TABLE IF NOT EXISTS category_review_history (
+      history_id TEXT PRIMARY KEY,
+      proposal_id TEXT NOT NULL,
+      action TEXT NOT NULL, -- 'APPROVE_NEW' | 'APPROVE_SUB' | 'MERGE' | 'REJECT'
+      target_category_id TEXT,
+      admin_notes TEXT,
+      applied_at TEXT NOT NULL,
+      FOREIGN KEY (proposal_id) REFERENCES category_proposals(proposal_id)
+    );
 
     -- User Profiles for Auto Registration & Customization
     CREATE TABLE IF NOT EXISTS user_profiles (
@@ -220,8 +349,68 @@ export function initDatabase() {
       expires_at TEXT NOT NULL
     );
   `);
+
+  // Migration helper for existing events table columns & indexes
+  try {
+    const tableInfo = db.prepare(`PRAGMA table_info(events)`).all() as Array<{ name: string }>;
+    const columnNames = new Set(tableInfo.map(c => c.name));
+    
+    if (!columnNames.has('city_id')) {
+      db.exec(`ALTER TABLE events ADD COLUMN city_id TEXT REFERENCES cities(city_id);`);
+    }
+    if (!columnNames.has('state_id')) {
+      db.exec(`ALTER TABLE events ADD COLUMN state_id TEXT REFERENCES states(state_id);`);
+    }
+
+    db.exec(`
+      CREATE INDEX IF NOT EXISTS idx_events_city_id ON events (city_id);
+      CREATE INDEX IF NOT EXISTS idx_events_state_id ON events (state_id);
+    `);
+
+    // Migration helper for registration_audits table
+    const auditTableInfo = db.prepare(`PRAGMA table_info(registration_audits)`).all() as Array<{ name: string }>;
+    const auditColumns = new Set(auditTableInfo.map(c => c.name));
+
+    if (!auditColumns.has('required_fields_schema')) {
+      db.exec(`ALTER TABLE registration_audits ADD COLUMN required_fields_schema TEXT;`);
+    }
+    if (!auditColumns.has('missing_fields')) {
+      db.exec(`ALTER TABLE registration_audits ADD COLUMN missing_fields TEXT;`);
+    }
+    if (!auditColumns.has('readiness_percentage')) {
+      db.exec(`ALTER TABLE registration_audits ADD COLUMN readiness_percentage INTEGER DEFAULT 0;`);
+    }
+    if (!auditColumns.has('email_sent_to')) {
+      db.exec(`ALTER TABLE registration_audits ADD COLUMN email_sent_to TEXT;`);
+    }
+    if (!auditColumns.has('email_delivery_status')) {
+      db.exec(`ALTER TABLE registration_audits ADD COLUMN email_delivery_status TEXT;`);
+    }
+    if (!auditColumns.has('email_timestamp')) {
+      db.exec(`ALTER TABLE registration_audits ADD COLUMN email_timestamp TEXT;`);
+    }
+    if (!auditColumns.has('hackathon_confirmation_url')) {
+      db.exec(`ALTER TABLE registration_audits ADD COLUMN hackathon_confirmation_url TEXT;`);
+    }
+    if (!auditColumns.has('hackathon_confirmation_status')) {
+      db.exec(`ALTER TABLE registration_audits ADD COLUMN hackathon_confirmation_status TEXT;`);
+    }
+    if (!auditColumns.has('hackathon_badge_id')) {
+      db.exec(`ALTER TABLE registration_audits ADD COLUMN hackathon_badge_id TEXT;`);
+    }
+    if (!auditColumns.has('tinyfish_run_id')) {
+      db.exec(`ALTER TABLE registration_audits ADD COLUMN tinyfish_run_id TEXT;`);
+    }
+    if (!auditColumns.has('tinyfish_result')) {
+      db.exec(`ALTER TABLE registration_audits ADD COLUMN tinyfish_result TEXT;`);
+    }
+    if (!auditColumns.has('tinyfish_streaming_url')) {
+      db.exec(`ALTER TABLE registration_audits ADD COLUMN tinyfish_streaming_url TEXT;`);
+    }
+  } catch (err) {
+    console.warn('Migration column check warning:', err);
+  }
 }
 
 // Initialize on module load
 initDatabase();
-
